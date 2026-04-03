@@ -9,7 +9,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
+	"math"
 	"math/big"
 	"os"
 	"testing"
@@ -52,6 +56,34 @@ func newPDFWithFont(t *testing.T) *GoPdf {
 		t.Fatalf("SetFont: %v", err)
 	}
 	return pdf
+}
+
+func createHTMLTestImage(t *testing.T, width, height int) string {
+	t.Helper()
+	ensureOutDir(t)
+
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, color.RGBA{R: 0x66, G: 0x99, B: 0xcc, A: 0xff})
+		}
+	}
+
+	path := fmt.Sprintf("%s/html_test_%dx%d.png", resOutDir, width, height)
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create test image: %v", err)
+	}
+	defer file.Close()
+
+	if err := png.Encode(file, img); err != nil {
+		t.Fatalf("encode test image: %v", err)
+	}
+	return path
+}
+
+func almostEqual(a, b float64) bool {
+	return math.Abs(a-b) < 0.001
 }
 
 // ============================================================
@@ -1101,6 +1133,56 @@ func TestAllFeatures_InsertHTMLBox(t *testing.T) {
 	}
 
 	if err := pdf.WritePdf(resOutDir + "/all_html.pdf"); err != nil {
+		t.Fatalf("WritePdf: %v", err)
+	}
+}
+
+func TestHTMLImageSizingHelpers(t *testing.T) {
+	imgPath := createHTMLTestImage(t, 120, 60)
+
+	holder, err := ImageHolderByPath(imgPath)
+	if err != nil {
+		t.Fatalf("ImageHolderByPath: %v", err)
+	}
+
+	w, h, err := imageHolderDimensions(holder)
+	if err != nil {
+		t.Fatalf("imageHolderDimensions: %v", err)
+	}
+	if !almostEqual(w, 120) || !almostEqual(h, 60) {
+		t.Fatalf("expected intrinsic size 120x60, got %vx%v", w, h)
+	}
+
+	fitW, fitH := fitWithinBox(w, h, 100, 100)
+	if !almostEqual(fitW, 100) || !almostEqual(fitH, 50) {
+		t.Fatalf("expected width clamp to 100x50, got %vx%v", fitW, fitH)
+	}
+
+	fitW, fitH = fitWithinBox(w, h, 80, 30)
+	if !almostEqual(fitW, 60) || !almostEqual(fitH, 30) {
+		t.Fatalf("expected two-step fit to 60x30, got %vx%v", fitW, fitH)
+	}
+}
+
+func TestAllFeatures_InsertHTMLBox_Table(t *testing.T) {
+	ensureOutDir(t)
+	pdf := newPDFWithFont(t)
+	pdf.AddPage()
+
+	htmlStr := `<table><thead><tr><th>Name</th><th>Description</th></tr></thead><tbody><tr><td>Alpha</td><td>Short text</td></tr><tr><td>Beta</td><td>This is a longer cell that should wrap onto multiple lines inside the table layout.</td></tr></tbody></table>`
+	endY, err := pdf.InsertHTMLBox(50, 50, 495, 700, htmlStr, HTMLBoxOption{
+		DefaultFontFamily: fontFamily,
+		DefaultFontSize:   12,
+		DefaultColor:      [3]uint8{0, 0, 0},
+	})
+	if err != nil {
+		t.Fatalf("InsertHTMLBox(table): %v", err)
+	}
+	if endY <= 50 {
+		t.Fatal("InsertHTMLBox(table) did not advance Y position")
+	}
+
+	if err := pdf.WritePdf(resOutDir + "/all_html_table.pdf"); err != nil {
 		t.Fatalf("WritePdf: %v", err)
 	}
 }

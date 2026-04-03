@@ -453,7 +453,7 @@ func headingFontSize(tag string) float64 {
 // isBlockElement returns true if the tag is a block-level element.
 func isBlockElement(tag string) bool {
 	switch tag {
-	case "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "hr", "center", "blockquote":
+	case "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "hr", "center", "blockquote", "table", "thead", "tbody", "tfoot", "tr":
 		return true
 	}
 	return false

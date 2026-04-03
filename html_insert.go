@@ -1,6 +1,8 @@
 package gopdf
 
 import (
+	"bytes"
+	"image"
 	"strconv"
 	"strings"
 )
@@ -52,6 +54,16 @@ type htmlRenderer struct {
 	boxH    float64 // box height (units)
 	cursorX float64 // current X position (units)
 	cursorY float64 // current Y position (units)
+}
+
+type htmlTableCell struct {
+	text   string
+	state  htmlRenderState
+	header bool
+}
+
+type htmlTableRow struct {
+	cells []htmlTableCell
 }
 
 // InsertHTMLBox renders simplified HTML content into a rectangular area on the PDF.
@@ -241,6 +253,8 @@ func (r *htmlRenderer) renderNode(node *htmlNode, state htmlRenderState) error {
 		return nil
 	case "img":
 		return r.renderImage(node, state)
+	case "table":
+		return r.renderTable(node, state)
 	case "ul", "ol":
 		return r.renderList(node, state, node.Tag == "ol")
 	case "li":
@@ -534,6 +548,16 @@ func (r *htmlRenderer) renderImage(node *htmlNode, state htmlRenderState) error 
 		return nil
 	}
 
+	imgHolder, err := ImageHolderByPath(src)
+	if err != nil {
+		return err
+	}
+
+	intrinsicW, intrinsicH, err := imageHolderDimensions(imgHolder)
+	if err != nil {
+		return err
+	}
+
 	// parse dimensions
 	imgW := 0.0
 	imgH := 0.0
@@ -548,21 +572,25 @@ func (r *htmlRenderer) renderImage(node *htmlNode, state htmlRenderState) error 
 		}
 	}
 
-	// default size if not specified
-	if imgW == 0 && imgH == 0 {
-		imgW = r.boxW * 0.5
-		imgH = imgW * 0.75
-	} else if imgW == 0 {
-		imgW = imgH * 1.33
-	} else if imgH == 0 {
-		imgH = imgW * 0.75
+	aspectRatio := 1.0
+	if intrinsicH > 0 {
+		aspectRatio = intrinsicW / intrinsicH
 	}
 
-	// clamp to box width
-	if imgW > r.boxW {
-		ratio := r.boxW / imgW
-		imgW = r.boxW
-		imgH *= ratio
+	if imgW > 0 && imgH > 0 {
+		// use explicit dimensions as-is
+	} else if imgW > 0 {
+		imgH = imgW / aspectRatio
+	} else if imgH > 0 {
+		imgW = imgH * aspectRatio
+	} else {
+		imgW = intrinsicW / r.unitConversion()
+		imgH = intrinsicH / r.unitConversion()
+	}
+
+	imgW, imgH = fitWithinBox(imgW, imgH, r.boxW, r.boxH)
+	if imgW <= 0 || imgH <= 0 {
+		return nil
 	}
 
 	// check if image fits on current line, if not, new line
@@ -575,11 +603,6 @@ func (r *htmlRenderer) renderImage(node *htmlNode, state htmlRenderState) error 
 		return nil // skip image if it doesn't fit
 	}
 
-	imgHolder, err := ImageHolderByPath(src)
-	if err != nil {
-		return err
-	}
-
 	rect := &Rect{W: imgW, H: imgH}
 	if err := r.gp.ImageByHolder(imgHolder, r.cursorX, r.cursorY, rect); err != nil {
 		return err
@@ -588,6 +611,323 @@ func (r *htmlRenderer) renderImage(node *htmlNode, state htmlRenderState) error 
 	r.cursorY += imgH
 	r.cursorX = r.boxX
 	return nil
+}
+
+func imageHolderDimensions(holder ImageHolder) (float64, float64, error) {
+	reader, ok := holder.(*imageBuff)
+	if !ok {
+		return 0, 0, image.ErrFormat
+	}
+
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(reader.Bytes()))
+	if err != nil {
+		return 0, 0, err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0, image.ErrFormat
+	}
+	return float64(cfg.Width), float64(cfg.Height), nil
+}
+
+func fitWithinBox(width, height, maxWidth, maxHeight float64) (float64, float64) {
+	if width <= 0 || height <= 0 {
+		return 0, 0
+	}
+	if maxWidth > 0 && width > maxWidth {
+		ratio := maxWidth / width
+		width = maxWidth
+		height *= ratio
+	}
+	if maxHeight > 0 && height > maxHeight {
+		ratio := maxHeight / height
+		height = maxHeight
+		width *= ratio
+	}
+	return width, height
+}
+
+func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error {
+	if r.cursorX > r.boxX {
+		r.newLine(state)
+	}
+	rows := collectHTMLTableRows(node, state)
+	if len(rows) == 0 {
+		return nil
+	}
+
+	maxCols := 0
+	for _, row := range rows {
+		if len(row.cells) > maxCols {
+			maxCols = len(row.cells)
+		}
+	}
+	if maxCols == 0 {
+		return nil
+	}
+
+	cellPadding := state.fontSize * 0.25 / r.unitConversion()
+	if cellPadding < 1 {
+		cellPadding = 1
+	}
+	colWidth := r.boxW / float64(maxCols)
+	if colWidth <= 0 {
+		return nil
+	}
+
+	if r.cursorY-r.boxY >= r.boxH {
+		return nil
+	}
+	r.addVerticalSpace(state.fontSize * 0.2)
+
+	for _, row := range rows {
+		rowHeight, err := r.measureHTMLTableRowHeight(row, colWidth, cellPadding, state)
+		if err != nil {
+			return err
+		}
+		if rowHeight <= 0 {
+			rowHeight = r.lineHeight(state) + cellPadding*2
+		}
+		if r.cursorY-r.boxY+rowHeight > r.boxH {
+			break
+		}
+
+		x := r.boxX
+		for col := 0; col < maxCols; col++ {
+			cell := htmlTableCell{state: state}
+			if col < len(row.cells) {
+				cell = row.cells[col]
+			}
+			if err := r.drawHTMLTableCell(x, r.cursorY, colWidth, rowHeight, cell, cellPadding, state); err != nil {
+				return err
+			}
+			x += colWidth
+		}
+		r.cursorY += rowHeight
+		r.cursorX = r.boxX
+	}
+
+	r.addVerticalSpace(state.fontSize * 0.2)
+	return nil
+}
+
+func collectHTMLTableRows(node *htmlNode, state htmlRenderState) []htmlTableRow {
+	var rows []htmlTableRow
+	for _, child := range node.Children {
+		if child.Type != htmlNodeElement {
+			continue
+		}
+		switch child.Tag {
+		case "tr":
+			if row, ok := buildHTMLTableRow(child, state); ok {
+				rows = append(rows, row)
+			}
+		case "thead", "tbody", "tfoot":
+			rows = append(rows, collectHTMLTableRows(child, state)...)
+		}
+	}
+	return rows
+}
+
+func buildHTMLTableRow(node *htmlNode, state htmlRenderState) (htmlTableRow, bool) {
+	row := htmlTableRow{}
+	for _, child := range node.Children {
+		if child.Type != htmlNodeElement {
+			continue
+		}
+		if child.Tag != "th" && child.Tag != "td" {
+			continue
+		}
+		cellState := state
+		if child.Tag == "th" {
+			cellState.fontStyle |= Bold
+			cellState.align = Center
+		}
+		cellState = applyInlineStyleRecursive(child, cellState)
+		row.cells = append(row.cells, htmlTableCell{
+			text:   extractHTMLNodeText(child),
+			state:  cellState,
+			header: child.Tag == "th",
+		})
+	}
+	return row, len(row.cells) > 0
+}
+
+func applyInlineStyleRecursive(node *htmlNode, state htmlRenderState) htmlRenderState {
+	state = applyTagState(node, state)
+	for _, child := range node.Children {
+		if child.Type == htmlNodeElement {
+			state = applyInlineStyleRecursive(child, state)
+		}
+	}
+	return state
+}
+
+func applyTagState(node *htmlNode, state htmlRenderState) htmlRenderState {
+	state = (&htmlRenderer{}).applyStyleAttr(node, state)
+	switch node.Tag {
+	case "b", "strong":
+		state.fontStyle |= Bold
+	case "i", "em":
+		state.fontStyle |= Italic
+	case "u", "ins":
+		state.fontStyle |= Underline
+	case "s", "strike", "del":
+		state.fontStyle |= Underline
+	case "font":
+		if color, ok := node.Attrs["color"]; ok {
+			if cr, cg, cb, cok := parseCSSColor(color); cok {
+				state.colorR, state.colorG, state.colorB = cr, cg, cb
+			}
+		}
+		if size, ok := node.Attrs["size"]; ok {
+			if sz, sok := parseFontSizeAttr(size); sok {
+				state.fontSize = sz
+			}
+		}
+		if face, ok := node.Attrs["face"]; ok {
+			state.fontFamily = face
+		}
+	case "center":
+		state.align = Center
+	}
+	return state
+}
+
+func extractHTMLNodeText(node *htmlNode) string {
+	if node.Type == htmlNodeText {
+		return node.Text
+	}
+	var parts []string
+	for _, child := range node.Children {
+		text := extractHTMLNodeText(child)
+		if strings.TrimSpace(text) != "" {
+			parts = append(parts, text)
+		}
+	}
+	return collapseWhitespace(strings.Join(parts, " "))
+}
+
+func (r *htmlRenderer) measureHTMLTableRowHeight(row htmlTableRow, colWidth, padding float64, fallback htmlRenderState) (float64, error) {
+	maxHeight := 0.0
+	contentWidth := colWidth - padding*2
+	if contentWidth <= 0 {
+		contentWidth = colWidth
+	}
+	for _, cell := range row.cells {
+		cellState := cell.state
+		if cellState.fontSize <= 0 {
+			cellState = fallback
+		}
+		height, err := r.measureWrappedTextHeight(cell.text, cellState, contentWidth)
+		if err != nil {
+			return 0, err
+		}
+		height += padding * 2
+		if height > maxHeight {
+			maxHeight = height
+		}
+	}
+	return maxHeight, nil
+}
+
+func (r *htmlRenderer) measureWrappedTextHeight(text string, state htmlRenderState, maxWidth float64) (float64, error) {
+	if err := r.applyFont(state); err != nil {
+		return 0, err
+	}
+	text = collapseWhitespace(text)
+	if text == "" {
+		return r.lineHeight(state), nil
+	}
+	if maxWidth <= 0 {
+		return r.lineHeight(state), nil
+	}
+
+	words := splitWords(text)
+	spaceWidth, err := r.gp.MeasureTextWidth(" ")
+	if err != nil {
+		return 0, err
+	}
+	lineCount := 1
+	lineWidth := 0.0
+	for _, word := range words {
+		wordWidth, err := r.gp.MeasureTextWidth(word)
+		if err != nil {
+			return 0, err
+		}
+		if wordWidth > maxWidth {
+			if lineWidth > 0 {
+				lineCount++
+				lineWidth = 0
+			}
+			charLines, err := r.measureLongWordLines(word, maxWidth)
+			if err != nil {
+				return 0, err
+			}
+			lineCount += charLines - 1
+			continue
+		}
+		candidate := wordWidth
+		if lineWidth > 0 {
+			candidate += lineWidth + spaceWidth
+		}
+		if lineWidth > 0 && candidate > maxWidth {
+			lineCount++
+			lineWidth = wordWidth
+		} else if lineWidth > 0 {
+			lineWidth += spaceWidth + wordWidth
+		} else {
+			lineWidth = wordWidth
+		}
+	}
+	return float64(lineCount) * r.lineHeight(state), nil
+}
+
+func (r *htmlRenderer) measureLongWordLines(word string, maxWidth float64) (int, error) {
+	lines := 1
+	lineWidth := 0.0
+	for _, ch := range word {
+		chWidth, err := r.gp.MeasureTextWidth(string(ch))
+		if err != nil {
+			return 0, err
+		}
+		if lineWidth > 0 && lineWidth+chWidth > maxWidth {
+			lines++
+			lineWidth = chWidth
+		} else {
+			lineWidth += chWidth
+		}
+	}
+	return lines, nil
+}
+
+func (r *htmlRenderer) drawHTMLTableCell(x, y, width, height float64, cell htmlTableCell, padding float64, fallback htmlRenderState) error {
+	cellState := cell.state
+	if cellState.fontSize <= 0 {
+		cellState = fallback
+	}
+	if cell.header {
+		r.gp.SetFillColor(240, 240, 240)
+		r.gp.RectFromUpperLeftWithStyle(x, y, width, height, "F")
+	}
+		r.gp.SetStrokeColor(0, 0, 0)
+		r.gp.SetLineWidth(0.5)
+		r.gp.RectFromUpperLeftWithStyle(x, y, width, height, "D")
+
+	if err := r.applyFont(cellState); err != nil {
+		return err
+	}
+	prevX, prevY := r.cursorX, r.cursorY
+	prevBoxX, prevBoxY, prevBoxW, prevBoxH := r.boxX, r.boxY, r.boxW, r.boxH
+	r.boxX = x + padding
+	r.boxY = y + padding
+	r.boxW = width - padding*2
+	r.boxH = height - padding*2
+	r.cursorX = r.boxX
+	r.cursorY = r.boxY
+	err := r.renderText(cell.text, cellState)
+	r.cursorX, r.cursorY = prevX, prevY
+	r.boxX, r.boxY, r.boxW, r.boxH = prevBoxX, prevBoxY, prevBoxW, prevBoxH
+	return err
 }
 
 func (r *htmlRenderer) renderList(node *htmlNode, state htmlRenderState, ordered bool) error {

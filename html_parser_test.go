@@ -198,14 +198,38 @@ func TestParseHTML_InlineStyle(t *testing.T) {
 	}
 }
 
+func TestParseHTML_Table(t *testing.T) {
+	nodes := parseHTML(`<table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody><tr><td>Foo</td><td>Bar</td></tr></tbody></table>`)
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	table := nodes[0]
+	if table.Tag != "table" {
+		t.Fatalf("expected <table>, got <%s>", table.Tag)
+	}
+	if len(table.Children) != 2 {
+		t.Fatalf("expected 2 table sections, got %d", len(table.Children))
+	}
+	if table.Children[0].Tag != "thead" || table.Children[1].Tag != "tbody" {
+		t.Fatalf("expected thead/tbody children, got <%s> <%s>", table.Children[0].Tag, table.Children[1].Tag)
+	}
+	row := table.Children[0].Children[0]
+	if row.Tag != "tr" || len(row.Children) != 2 {
+		t.Fatalf("expected header row with 2 cells, got <%s> with %d children", row.Tag, len(row.Children))
+	}
+	if row.Children[0].Tag != "th" || row.Children[1].Tag != "th" {
+		t.Fatalf("expected th cells, got <%s> <%s>", row.Children[0].Tag, row.Children[1].Tag)
+	}
+}
+
 func TestIsBlockElement(t *testing.T) {
-	blocks := []string{"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "hr", "center"}
+	blocks := []string{"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "hr", "center", "table", "thead", "tbody", "tfoot", "tr"}
 	for _, tag := range blocks {
 		if !isBlockElement(tag) {
 			t.Errorf("expected %q to be block element", tag)
 		}
 	}
-	inlines := []string{"b", "i", "u", "span", "a", "font", "em", "strong"}
+	inlines := []string{"b", "i", "u", "span", "a", "font", "em", "strong", "td", "th"}
 	for _, tag := range inlines {
 		if isBlockElement(tag) {
 			t.Errorf("expected %q to be inline element", tag)
