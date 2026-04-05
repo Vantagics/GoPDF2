@@ -107,6 +107,7 @@ func (c *ContentObj) appendStreamPlaceHolderText(placeHolderWidth float64) error
 	fontCountIndex := c.getRoot().curr.FontFontCount + 1
 	fontSize := c.getRoot().curr.FontSize
 	fontStyle := c.getRoot().curr.FontStyle
+	textRise := c.getRoot().curr.TextRise
 	charSpacing := c.getRoot().curr.CharSpacing
 	x := c.getRoot().curr.X
 	y := c.getRoot().curr.Y
@@ -123,6 +124,7 @@ func (c *ContentObj) appendStreamPlaceHolderText(placeHolderWidth float64) error
 		fontCountIndex: fontCountIndex,
 		fontSize:       fontSize,
 		fontStyle:      fontStyle,
+		textRise:       textRise,
 		charSpacing:    charSpacing,
 		setXCount:      setXCount,
 		x:              x,
@@ -155,6 +157,7 @@ func (c *ContentObj) AppendStreamText(text string) error {
 	fontCountIndex := c.getRoot().curr.FontFontCount + 1
 	fontSize := c.getRoot().curr.FontSize
 	fontStyle := c.getRoot().curr.FontStyle
+	textRise := c.getRoot().curr.TextRise
 	charSpacing := c.getRoot().curr.CharSpacing
 	x := c.getRoot().curr.X
 	y := c.getRoot().curr.Y
@@ -171,6 +174,7 @@ func (c *ContentObj) AppendStreamText(text string) error {
 		fontCountIndex: fontCountIndex,
 		fontSize:       fontSize,
 		fontStyle:      fontStyle,
+		textRise:       textRise,
 		charSpacing:    charSpacing,
 		setXCount:      setXCount,
 		x:              x,
@@ -199,6 +203,7 @@ func (c *ContentObj) AppendStreamSubsetFont(rectangle *Rect, text string, cellOp
 	fontCountIndex := c.getRoot().curr.FontFontCount + 1
 	fontSize := c.getRoot().curr.FontSize
 	fontStyle := c.getRoot().curr.FontStyle
+	textRise := c.getRoot().curr.TextRise
 	charSpacing := c.getRoot().curr.CharSpacing
 	x := c.getRoot().curr.X
 	y := c.getRoot().curr.Y
@@ -213,6 +218,7 @@ func (c *ContentObj) AppendStreamSubsetFont(rectangle *Rect, text string, cellOp
 		fontCountIndex: fontCountIndex,
 		fontSize:       fontSize,
 		fontStyle:      fontStyle,
+		textRise:       textRise,
 		charSpacing:    charSpacing,
 		setXCount:      setXCount,
 		x:              x,

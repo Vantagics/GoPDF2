@@ -1137,6 +1137,46 @@ func TestAllFeatures_InsertHTMLBox(t *testing.T) {
 	}
 }
 
+func TestInsertHTMLBox_SubSupUsesTextRise(t *testing.T) {
+	pdf := newPDFWithFont(t)
+	pdf.AddPage()
+	_, err := pdf.InsertHTMLBox(50, 50, 495, 200, `<p>H<sub>2</sub>O and x<sup>2</sup></p>`, HTMLBoxOption{
+		DefaultFontFamily: fontFamily,
+		DefaultFontSize:   12,
+		DefaultColor:      [3]uint8{0, 0, 0},
+	})
+	if err != nil {
+		t.Fatalf("InsertHTMLBox: %v", err)
+	}
+	elements, err := pdf.GetPageElements(1)
+	if err != nil {
+		t.Fatalf("GetPageElements: %v", err)
+	}
+	foundSub := false
+	foundSup := false
+	for _, elem := range elements {
+		cache, ok := pdf.findContentObj(1).listCache.caches[elem.Index].(*cacheContentText)
+		if !ok {
+			continue
+		}
+		switch cache.text {
+		case "2":
+			if cache.textRise < 0 {
+				foundSub = true
+			}
+			if cache.textRise > 0 {
+				foundSup = true
+			}
+		}
+	}
+	if !foundSub {
+		t.Fatal("expected subscript text element with negative text rise")
+	}
+	if !foundSup {
+		t.Fatal("expected superscript text element with positive text rise")
+	}
+}
+
 func TestHTMLImageSizingHelpers(t *testing.T) {
 	imgPath := createHTMLTestImage(t, 120, 60)
 

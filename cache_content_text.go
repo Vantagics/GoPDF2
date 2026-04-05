@@ -29,6 +29,7 @@ type cacheContentText struct {
 	fontCountIndex int //Curr.FontFontCount+1
 	fontSize       float64
 	fontStyle      int
+	textRise       float64
 	charSpacing    float64
 	setXCount      int //จำนวนครั้งที่ใช้ setX
 	x, y           float64
@@ -156,6 +157,9 @@ func (c *cacheContentText) write(w io.Writer, protection *PDFProtection) error {
 
 	fmt.Fprintf(w, "%0.2f %0.2f TD\n", x, y)
 	fmt.Fprintf(w, "/F%d %s Tf %s Tc\n", c.fontCountIndex, FormatFloatTrim(c.fontSize), FormatFloatTrim(c.charSpacing))
+	if c.textRise != 0 {
+		fmt.Fprintf(w, "%s Ts\n", FormatFloatTrim(c.textRise))
+	}
 
 	if c.txtColorMode == "color" {
 		c.textColor.write(w, protection)

@@ -38,6 +38,7 @@ type htmlRenderState struct {
 	fontFamily string
 	fontSize   float64
 	fontStyle  int // Regular, Bold, Italic, Underline
+	rise       float64
 	colorR     uint8
 	colorG     uint8
 	colorB     uint8
@@ -261,8 +262,10 @@ func (r *htmlRenderer) renderNode(node *htmlNode, state htmlRenderState) error {
 		// handled by renderList
 	case "sub":
 		newState.fontSize = state.fontSize * 0.7
+		newState.rise = -state.fontSize * 0.25
 	case "sup":
 		newState.fontSize = state.fontSize * 0.7
+		newState.rise = state.fontSize * 0.35
 	case "blockquote":
 		newState = r.applyStyleAttr(node, newState)
 		if r.cursorX > r.boxX {
@@ -353,6 +356,7 @@ func (r *htmlRenderer) applyFont(state htmlRenderState) error {
 			return err
 		}
 	}
+	r.gp.curr.TextRise = state.rise
 	r.gp.SetTextColor(state.colorR, state.colorG, state.colorB)
 	return nil
 }
@@ -959,10 +963,7 @@ func (r *htmlRenderer) renderList(node *htmlNode, state htmlRenderState, ordered
 
 		var marker string
 		if ordered {
-			marker = string(rune('0'+counter)) + ". "
-			if counter > 9 {
-				marker = strconv.Itoa(counter) + ". "
-			}
+			marker = strconv.Itoa(counter) + ". "
 		} else {
 			marker = "• "
 		}

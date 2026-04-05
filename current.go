@@ -20,6 +20,7 @@ type Current struct {
 	CountOfColorSpace    int
 
 	CharSpacing float64
+	TextRise    float64
 
 	FontISubset *SubsetFontObj // FontType == CURRENT_FONT_TYPE_SUBSET
 
