@@ -381,7 +381,7 @@ func (r *htmlRenderer) resolveFontFamily(state htmlRenderState) string {
 }
 
 func (r *htmlRenderer) lineHeight(state htmlRenderState) float64 {
-	return state.fontSize * 1.2 / r.unitConversion() + r.opt.LineSpacing
+	return state.fontSize*1.2/r.unitConversion() + r.opt.LineSpacing
 }
 
 func (r *htmlRenderer) unitConversion() float64 {
@@ -913,9 +913,9 @@ func (r *htmlRenderer) drawHTMLTableCell(x, y, width, height float64, cell htmlT
 		r.gp.SetFillColor(240, 240, 240)
 		r.gp.RectFromUpperLeftWithStyle(x, y, width, height, "F")
 	}
-		r.gp.SetStrokeColor(0, 0, 0)
-		r.gp.SetLineWidth(0.5)
-		r.gp.RectFromUpperLeftWithStyle(x, y, width, height, "D")
+	r.gp.SetStrokeColor(0, 0, 0)
+	r.gp.SetLineWidth(0.5)
+	r.gp.RectFromUpperLeftWithStyle(x, y, width, height, "D")
 
 	if err := r.applyFont(cellState); err != nil {
 		return err
@@ -940,45 +940,48 @@ func (r *htmlRenderer) renderList(node *htmlNode, state htmlRenderState, ordered
 	}
 	r.addVerticalSpace(state.fontSize * 0.2)
 
-	indent := state.fontSize * 1.2 / r.unitConversion()
-	counter := 0
-
+	// Collect <li> nodes first so the marker column can fit the widest label
+	// (e.g. "10." / "20."). A fixed fontSize*1.2 indent used to overflow for
+	// multi-digit ordered markers and paint over the item text.
+	items := make([]*htmlNode, 0, len(node.Children))
 	for _, child := range node.Children {
-		if child.Type != htmlNodeElement || child.Tag != "li" {
-			continue
+		if child.Type == htmlNodeElement && child.Tag == "li" {
+			items = append(items, child)
 		}
-		counter++
+	}
+	if len(items) == 0 {
+		r.addVerticalSpace(state.fontSize * 0.2)
+		return nil
+	}
 
+	if err := r.applyFont(state); err != nil {
+		return err
+	}
+
+	markers, markerWidths, maxMarkerW := r.listMarkers(len(items), ordered)
+	leftPad, markerCol, contentIndent := listMarkerLayout(state.fontSize, r.unitConversion(), r.boxW, maxMarkerW)
+
+	for i, child := range items {
 		if r.cursorY-r.boxY+r.lineHeight(state) > r.boxH {
 			break
 		}
 
-		// render bullet or number
 		if err := r.applyFont(state); err != nil {
 			return err
 		}
 
-		r.cursorX = r.boxX + indent*0.5
+		// Right-align the marker in the marker column so "9." and "10." line up.
+		// Marker right edge is always at boxX+leftPad+markerCol (<= content start).
+		r.cursorX = r.boxX + leftPad + markerCol - markerWidths[i]
 		r.gp.SetXY(r.cursorX, r.cursorY)
-
-		var marker string
-		if ordered {
-			marker = strconv.Itoa(counter) + ". "
-		} else {
-			marker = "• "
-		}
-
-		markerWidth, _ := r.gp.MeasureTextWidth(marker)
-		rect := &Rect{W: markerWidth, H: r.lineHeight(state)}
-		if err := r.gp.CellWithOption(rect, marker, CellOption{Align: Left | Top}); err != nil {
+		rect := &Rect{W: markerWidths[i], H: r.lineHeight(state)}
+		if err := r.gp.CellWithOption(rect, markers[i], CellOption{Align: Left | Top}); err != nil {
 			return err
 		}
 
-		// render list item content with indent
-		oldBoxX := r.boxX
-		oldBoxW := r.boxW
-		r.boxX += indent
-		r.boxW -= indent
+		oldBoxX, oldBoxW := r.boxX, r.boxW
+		r.boxX = oldBoxX + contentIndent
+		r.boxW = oldBoxW - contentIndent
 		r.cursorX = r.boxX
 
 		childState := r.applyStyleAttr(child, state)
@@ -990,13 +993,102 @@ func (r *htmlRenderer) renderList(node *htmlNode, state htmlRenderState, ordered
 			r.newLine(state)
 		}
 
-		r.boxX = oldBoxX
-		r.boxW = oldBoxW
+		r.boxX, r.boxW = oldBoxX, oldBoxW
 		r.cursorX = r.boxX
 	}
 
 	r.addVerticalSpace(state.fontSize * 0.2)
 	return nil
+}
+
+// listMarkers builds marker labels and their measured widths.
+// Ordered: "1.", "2.", ...  Unordered: a single bullet glyph.
+func (r *htmlRenderer) listMarkers(n int, ordered bool) (markers []string, widths []float64, maxW float64) {
+	markers = make([]string, n)
+	widths = make([]float64, n)
+	if n <= 0 {
+		return markers, widths, 0
+	}
+	if !ordered {
+		const bullet = "•"
+		w, _ := r.gp.MeasureTextWidth(bullet)
+		for i := 0; i < n; i++ {
+			markers[i] = bullet
+			widths[i] = w
+		}
+		return markers, widths, w
+	}
+	for i := 0; i < n; i++ {
+		// No trailing space — spacing comes from listMarkerLayout's gap.
+		markers[i] = strconv.Itoa(i+1) + "."
+		w, _ := r.gp.MeasureTextWidth(markers[i])
+		widths[i] = w
+		if w > maxW {
+			maxW = w
+		}
+	}
+	return markers, widths, maxW
+}
+
+// listMarkerLayout sizes the marker column so multi-digit labels never overflow
+// into item text.
+//
+// Layout (left → right):
+//
+//	[ leftPad ][ markerCol (right-aligned labels) ][ gap ][ content… ]
+//
+// Invariants (when boxW > 0):
+//   - contentIndent <= boxW                         (content width never negative)
+//   - leftPad + markerCol <= contentIndent          (marker right edge ≤ content start)
+//   - markerCol >= maxMarkerW, unless maxMarkerW > boxW (then markerCol == boxW)
+//
+// On narrow boxes, padding/gap shrink first. Residual width always goes to content.
+func listMarkerLayout(fontSize, unit, boxW, maxMarkerW float64) (leftPad, markerCol, contentIndent float64) {
+	if unit <= 0 {
+		unit = 1
+	}
+	if maxMarkerW < 0 {
+		maxMarkerW = 0
+	}
+
+	leftPad = fontSize * 0.25 / unit
+	gap := fontSize * 0.4 / unit
+	minCol := fontSize * 0.9 / unit
+
+	markerCol = maxMarkerW
+	if markerCol < minCol {
+		markerCol = minCol
+	}
+	contentIndent = leftPad + markerCol + gap
+
+	// Narrow box: drop left pad and shrink gap; keep maxMarkerW.
+	if boxW > 0 && contentIndent > boxW*0.45 {
+		leftPad = 0
+		gap = fontSize * 0.2 / unit
+		markerCol = maxMarkerW
+		contentIndent = markerCol + gap
+	}
+
+	// Fit inside the box. Residual width becomes content, not dead space.
+	if boxW > 0 && contentIndent > boxW {
+		leftPad = 0
+		if maxMarkerW >= boxW {
+			// Marker alone fills the box; content width collapses to zero.
+			markerCol = boxW
+			contentIndent = boxW
+		} else {
+			markerCol = maxMarkerW
+			// Prefer a small gap when residual allows; otherwise gap = 0.
+			minGap := fontSize * 0.15 / unit
+			if markerCol+minGap <= boxW {
+				contentIndent = markerCol + minGap
+			} else {
+				contentIndent = markerCol
+			}
+		}
+	}
+
+	return leftPad, markerCol, contentIndent
 }
 
 // collapseWhitespace collapses consecutive whitespace characters into a single space.

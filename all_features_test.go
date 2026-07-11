@@ -16,6 +16,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,15 +26,15 @@ import (
 // ============================================================
 
 const (
-	resFontPath     = "./test/res/LiberationSerif-Regular.ttf"
-	resFontPath2    = "./examples/outline_example/Ubuntu-L.ttf"
-	resJPEGPath     = "./test/res/gopher01.jpg"
-	resPNGPath      = "./test/res/PNG_transparency_demonstration_1.png"
-	resPNGPath2     = "./test/res/gopher02.png"
-	resTestPDF      = "./examples/outline_example/outline_demo.pdf"
-	resOutDir       = "./test/out"
-	fontFamily      = "LiberationSerif"
-	fontFamily2     = "Ubuntu-L"
+	resFontPath  = "./test/res/LiberationSerif-Regular.ttf"
+	resFontPath2 = "./examples/outline_example/Ubuntu-L.ttf"
+	resJPEGPath  = "./test/res/gopher01.jpg"
+	resPNGPath   = "./test/res/PNG_transparency_demonstration_1.png"
+	resPNGPath2  = "./test/res/gopher02.png"
+	resTestPDF   = "./examples/outline_example/outline_demo.pdf"
+	resOutDir    = "./test/out"
+	fontFamily   = "LiberationSerif"
+	fontFamily2  = "Ubuntu-L"
 )
 
 // helper: ensure output directory exists
@@ -585,8 +586,8 @@ func TestAllFeatures_Drawing(t *testing.T) {
 
 	// RectFromUpperLeftWithOpts
 	if err := pdf.RectFromUpperLeftWithOpts(DrawableRectOptions{
-		Rect:       Rect{W: 80, H: 25},
-		X:          350, Y: 270,
+		Rect: Rect{W: 80, H: 25},
+		X:    350, Y: 270,
 		PaintStyle: DrawPaintStyle,
 	}); err != nil {
 		t.Fatalf("RectFromUpperLeftWithOpts: %v", err)
@@ -594,8 +595,8 @@ func TestAllFeatures_Drawing(t *testing.T) {
 
 	// RectFromLowerLeftWithOpts
 	if err := pdf.RectFromLowerLeftWithOpts(DrawableRectOptions{
-		Rect:       Rect{W: 80, H: 25},
-		X:          350, Y: 330,
+		Rect: Rect{W: 80, H: 25},
+		X:    350, Y: 330,
 		PaintStyle: DrawPaintStyle,
 	}); err != nil {
 		t.Fatalf("RectFromLowerLeftWithOpts: %v", err)
@@ -1174,6 +1175,81 @@ func TestInsertHTMLBox_SubSupUsesTextRise(t *testing.T) {
 	}
 	if !foundSup {
 		t.Fatal("expected superscript text element with positive text rise")
+	}
+}
+
+// TestInsertHTMLBox_OrderedListMultiDigitNoOverlap ensures multi-digit ordered
+// list markers (10., 11., ...) do not paint over the list item text.
+func TestInsertHTMLBox_OrderedListMultiDigitNoOverlap(t *testing.T) {
+	ensureOutDir(t)
+	pdf := newPDFWithFont(t)
+	pdf.AddPage()
+
+	var b strings.Builder
+	b.WriteString("<ol>")
+	for i := 1; i <= 12; i++ {
+		fmt.Fprintf(&b, "<li>Item%02dText</li>", i)
+	}
+	b.WriteString("</ol>")
+
+	_, err := pdf.InsertHTMLBox(50, 50, 495, 700, b.String(), HTMLBoxOption{
+		DefaultFontFamily: fontFamily,
+		DefaultFontSize:   12,
+		DefaultColor:      [3]uint8{0, 0, 0},
+	})
+	if err != nil {
+		t.Fatalf("InsertHTMLBox: %v", err)
+	}
+	if err := pdf.SetFont(fontFamily, "", 12); err != nil {
+		t.Fatalf("SetFont: %v", err)
+	}
+
+	elements, err := pdf.GetPageElements(1)
+	if err != nil {
+		t.Fatalf("GetPageElements: %v", err)
+	}
+
+	type textElem struct {
+		text string
+		x, w float64
+	}
+	var texts []textElem
+	for _, elem := range elements {
+		if elem.Type != ElementText {
+			continue
+		}
+		w, _ := pdf.MeasureTextWidth(elem.Text)
+		texts = append(texts, textElem{text: elem.Text, x: elem.X, w: w})
+	}
+
+	// For every multi-digit item, marker right edge must be left of content.
+	for n := 10; n <= 12; n++ {
+		markerLabel := fmt.Sprintf("%d.", n)
+		contentKey := fmt.Sprintf("Item%02d", n)
+		var marker, content *textElem
+		for i := range texts {
+			if texts[i].text == markerLabel {
+				marker = &texts[i]
+			}
+			if strings.Contains(texts[i].text, contentKey) {
+				content = &texts[i]
+			}
+		}
+		if marker == nil || content == nil {
+			t.Fatalf("item %d: marker=%v content=%v (missing)", n, marker != nil, content != nil)
+		}
+		markerRight := marker.x + marker.w
+		if content.x < markerRight-0.5 {
+			t.Fatalf("item %d: marker %q ends at %.2f, content %q starts at %.2f (overlap)",
+				n, marker.text, markerRight, content.text, content.x)
+		}
+		if content.x-markerRight < 1.0 {
+			t.Fatalf("item %d: gap between marker and content too small (%.2f)", n, content.x-markerRight)
+		}
+	}
+
+	if err := pdf.WritePdf(resOutDir + "/ordered_list_multidigit.pdf"); err != nil {
+		t.Fatalf("WritePdf: %v", err)
 	}
 }
 
