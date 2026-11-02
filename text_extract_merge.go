@@ -34,6 +34,10 @@ func estimateRunWidth(e ExtractedText, nextX float64) float64 {
 	if len(runes) == 0 {
 		return 0
 	}
+	// Exact advance computed by the raw parser from font /Widths.
+	if e.Width > 0 {
+		return e.Width
+	}
 	if nextX >= 0 {
 		w := nextX - e.X
 		if w > 0 && w < float64(len(runes))*math.Max(e.FontSize, 1)*2.0 {
@@ -91,6 +95,7 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 		var words []mergedRun
 		var cur strings.Builder
 		wordX := math.NaN() // left edge of the word being built
+		wordW := 0.0        // accumulated advance width of the word
 		lastX := math.NaN() // X of the last run appended into the word
 		lastW := 0.0        // width estimate of the last run appended
 		curSize := 0.0
@@ -99,14 +104,8 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 
 		flush := func() {
 			if cur.Len() > 0 {
-				runes := []rune(cur.String())
-				size := curSize
-				if size <= 0 {
-					size = 12
-				}
-				w := 0.55 * size * float64(len(runes))
 				words = append(words, mergedRun{
-					text: cur.String(), x: wordX, width: w, y: ln.y,
+					text: cur.String(), x: wordX, width: wordW, y: ln.y,
 					font: curFont, size: curSize,
 				})
 			}
@@ -138,6 +137,7 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 			if cur.Len() == 0 {
 				cur.WriteString(r.Text)
 				wordX = r.X
+				wordW = w
 				lastX = r.X
 				lastW = w
 				curSize = r.FontSize
@@ -150,12 +150,14 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 			if !spaceSeen && gap <= mergeGapRatio*size {
 				// same word: append without space
 				cur.WriteString(r.Text)
+				wordW += gap + w
 				lastX = r.X
 				lastW = w
 			} else {
 				flush()
 				cur.WriteString(r.Text)
 				wordX = r.X
+				wordW = w
 				lastX = r.X
 				lastW = w
 				curSize = r.FontSize

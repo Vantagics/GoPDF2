@@ -432,7 +432,7 @@ func parseFontWidths(parser *rawPDFParser, dict string) (map[int]float64, float6
 	return widths, defaultWidth
 }
 
-// parseWArray parses a CID font /W array: [c [w1 w2 ...] | c1 c2 w].
+// parseWArray parses a CID font /W array: [c [w1 w2 ...] | c1 c2 w | c[w]].
 func parseWArray(dict string, out map[int]float64) {
 	idx := strings.Index(dict, "/W")
 	if idx < 0 {
@@ -448,6 +448,14 @@ func parseWArray(dict string, out map[int]float64) {
 		return
 	}
 	arr := rest[start+1 : end]
+	// Compact form "15[500] 23[780]" (no space between CID and width).
+	for _, m := range reCompactW.FindAllStringSubmatch(arr, -1) {
+		c, _ := strconv.Atoi(m[1])
+		w, _ := strconv.ParseFloat(m[2], 64)
+		out[c] = w
+	}
+	// Strip compact pairs so the general parser doesn't see them.
+	arr = reCompactW.ReplaceAllString(arr, " ")
 	fields := strings.Fields(arr)
 	i := 0
 	for i < len(fields) {
@@ -488,6 +496,8 @@ func parseWArray(dict string, out map[int]float64) {
 		}
 	}
 }
+
+var reCompactW = regexp.MustCompile(`(\d+)\[(-?[\d.]+)\]`)
 
 // extractNumValue extracts a float value for a key from a dict string.
 func extractNumValue(dict, key string) float64 {
@@ -579,6 +589,34 @@ func shownAdvance(rawToken string, fi *fontInfo, fontSize float64) float64 {
 			code = int(data[i])
 		}
 		total += glyphAdvance(fi, code, fontSize)
+	}
+	return total
+}
+
+// shownWidth returns the shown advance only when the font carries real glyph
+// width data; otherwise 0 (callers fall back to position-derived estimates).
+func shownWidth(rawToken string, fi *fontInfo, fontSize float64) float64 {
+	if fi == nil || len(fi.widths) == 0 {
+		return 0
+	}
+	return shownAdvance(rawToken, fi, fontSize)
+}
+
+// tjWidth returns the TJ array advance when the font carries real widths.
+func tjWidth(arr []string, fi *fontInfo, fontSize float64) float64 {
+	if fi == nil || len(fi.widths) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, item := range arr {
+		if isStringToken(item) {
+			total += shownAdvance(item, fi, fontSize)
+		} else if v, err := strconv.ParseFloat(item, 64); err == nil {
+			total -= v / 1000.0 * fontSize
+		}
+	}
+	if total < 0 {
+		return 0
 	}
 	return total
 }
@@ -754,6 +792,7 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 					Y:        y,
 					FontName: fontDisplayName(curFont),
 					FontSize: fontSize,
+					Width:    tjWidth(arr, curFont, fontSize),
 				})
 			}
 			tmX += advance
@@ -773,6 +812,7 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 					results = append(results, ExtractedText{
 						Text: text, X: x, Y: y,
 						FontName: fontDisplayName(curFont), FontSize: fontSize,
+						Width: shownWidth(raw, curFont, fontSize),
 					})
 				}
 				tmX += shownAdvance(raw, curFont, fontSize)
@@ -794,6 +834,7 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 					results = append(results, ExtractedText{
 						Text: text, X: x, Y: y,
 						FontName: fontDisplayName(curFont), FontSize: fontSize,
+						Width: shownWidth(raw, curFont, fontSize),
 					})
 				}
 				tmX += shownAdvance(raw, curFont, fontSize)
