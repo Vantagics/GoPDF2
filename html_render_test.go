@@ -380,4 +380,3 @@ func TestHTML_Base64Image(t *testing.T) {
 func itoa(i int) string {
 	return strconv.Itoa(i)
 }
-

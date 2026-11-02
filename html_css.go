@@ -237,13 +237,28 @@ func parseSimpleSelector(s string) (cssSelector, bool) {
 }
 
 // htmlStyleResolver resolves computed styles for nodes.
+// Rules are pre-bucketed by specificity so each resolve is a single pass
+// over the matching tier (id > class > tag).
 type htmlStyleResolver struct {
-	rules []cssRule
+	tagRules   []cssRule
+	classRules []cssRule
+	idRules    []cssRule
 }
 
 // newHTMLStyleResolver builds a resolver from <style> blocks found in the tree.
 func newHTMLStyleResolver(nodes []*htmlNode) *htmlStyleResolver {
-	return &htmlStyleResolver{rules: parseStylesheet(extractStyleBlocks(nodes))}
+	r := &htmlStyleResolver{}
+	for _, rule := range parseStylesheet(extractStyleBlocks(nodes)) {
+		switch rule.selector.specificity() {
+		case 3:
+			r.idRules = append(r.idRules, rule)
+		case 2:
+			r.classRules = append(r.classRules, rule)
+		default:
+			r.tagRules = append(r.tagRules, rule)
+		}
+	}
+	return r
 }
 
 // resolve returns the merged style properties for a node:
@@ -254,15 +269,18 @@ func (r *htmlStyleResolver) resolve(node *htmlNode) map[string]string {
 	if node == nil || node.Type != htmlNodeElement {
 		return out
 	}
-	for spec := 1; spec <= 3; spec++ {
-		for _, rule := range r.rules {
-			if rule.selector.specificity() == spec && rule.selector.matches(node) {
-				for k, v := range rule.props {
+	apply := func(rules []cssRule) {
+		for i := range rules {
+			if rules[i].selector.matches(node) {
+				for k, v := range rules[i].props {
 					out[k] = v
 				}
 			}
 		}
 	}
+	apply(r.tagRules)
+	apply(r.classRules)
+	apply(r.idRules)
 	if styleStr, ok := node.Attrs["style"]; ok && styleStr != "" {
 		for k, v := range parseInlineStyle(styleStr) {
 			out[k] = v

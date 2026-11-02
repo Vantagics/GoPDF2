@@ -113,7 +113,7 @@ func parseFormula(s string) []*formulaToken {
 				j++
 			}
 			if j > i+1 {
-				tok := &formulaToken{kind: 't', text: latexCommand(s[i+1:j])}
+				tok := &formulaToken{kind: 't', text: latexCommand(s[i+1 : j])}
 				i = j
 				return []*formulaToken{tok}
 			}
@@ -373,8 +373,12 @@ func (gp *GoPdf) DrawFormula(x, y float64, latex string, fontSize float64, opt *
 	m := gp.measureFormulaLayout(tokens, fontSize)
 
 	prevX, prevY := gp.GetX(), gp.GetY()
+	prevSize := gp.curr.FontSize
 	defer func() {
 		gp.SetXY(prevX, prevY)
+		// script levels leave a smaller font size active — restore it so
+		// subsequent drawing continues at the caller's size
+		gp.curr.FontSize = prevSize
 	}()
 
 	rise := fontSize * 0.3 // top padding
@@ -385,7 +389,6 @@ func (gp *GoPdf) DrawFormula(x, y float64, latex string, fontSize float64, opt *
 	}
 	return m.ascent + m.descent + fontSize*0.3, nil
 }
-
 
 // renderFormulaTokens draws tokens with baseline at (x, baselineY).
 func (gp *GoPdf) renderFormulaTokens(tokens []*formulaToken, x, baselineY, fontSize float64) error {
@@ -518,7 +521,7 @@ func (gp *GoPdf) renderFormulaTokens(tokens []*formulaToken, x, baselineY, fontS
 			if err := gp.renderFormulaTokens(bot, inner+(w-bm.width)/2, botBaseline, scriptSize); err != nil {
 				return err
 			}
-			drawBigParen(inner + w + fontSize*0.05, false)
+			drawBigParen(inner+w+fontSize*0.05, false)
 			gp.curr.FontSize = fontSize
 			cur += w + fontSize*0.6
 		}

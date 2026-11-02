@@ -633,17 +633,18 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 		curFont  *fontInfo
 		fontSize float64
 		// Text matrix components
-		tmX, tmY     float64
+		tmX, tmY float64
 		// Line matrix
-		tlmX, tlmY   float64
+		tlmX, tlmY float64
 		// CTM (simplified — only tracking translation)
-		ctmA, ctmD   float64 = 1, 1
-		ctmE, ctmF   float64
-		tl            float64 // text leading
+		ctmA, ctmD float64 = 1, 1
+		ctmE, ctmF float64
+		tl         float64 // text leading
 	)
 	pageHeight := mediaBox[3] - mediaBox[1]
 
 	stack := make([]float64, 0, 64)
+	var scratch [8]float64 // reused by popN — operator arity is at most 6 (Tm/cm)
 	pushNum := func(s string) {
 		v, err := strconv.ParseFloat(s, 64)
 		if err == nil {
@@ -652,14 +653,12 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 	}
 	popN := func(n int) []float64 {
 		if len(stack) < n {
-			r := make([]float64, n)
 			stack = stack[:0]
-			return r
+			return scratch[:n]
 		}
-		r := make([]float64, n)
-		copy(r, stack[len(stack)-n:])
+		copy(scratch[:n], stack[len(stack)-n:])
 		stack = stack[:len(stack)-n]
-		return r
+		return scratch[:n]
 	}
 
 	for i := 0; i < len(tokens); i++ {
@@ -1012,12 +1011,12 @@ func decodeTextString(raw string, fi *fontInfo) string {
 		hex = strings.ReplaceAll(hex, " ", "")
 		hex = strings.ReplaceAll(hex, "\n", "")
 		hex = strings.ReplaceAll(hex, "\r", "")
-		return decodeHexBytes(hexToBytes(hex), fi)
+		return decodeStringBytes(hexToBytes(hex), fi)
 	}
 	if strings.HasPrefix(raw, "(") && strings.HasSuffix(raw, ")") {
 		inner := raw[1 : len(raw)-1]
 		inner = unescapePDFString(inner)
-		return decodeLiteralBytes([]byte(inner), fi)
+		return decodeStringBytes([]byte(inner), fi)
 	}
 	return raw
 }
@@ -1048,8 +1047,10 @@ func hexVal(c byte) byte {
 	return 0
 }
 
-// decodeHexBytes decodes raw bytes from a hex string using font info.
-func decodeHexBytes(data []byte, fi *fontInfo) string {
+// decodeStringBytes decodes raw string bytes (from hex or literal strings)
+// using the font's ToUnicode CMap, encoding tables, predefined CMaps and
+// legacy CJK decoders as available.
+func decodeStringBytes(data []byte, fi *fontInfo) string {
 	// UTF-16BE BOM inside the string — used by PDF 2.0 text strings.
 	if len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF {
 		return decodeUTF16BE(data[2:])
@@ -1077,61 +1078,12 @@ func decodeHexBytes(data []byte, fi *fontInfo) string {
 		}
 		return string(data)
 	}
-	// Simple fonts with hex strings: 1-byte codes.
+	// Simple fonts: 1-byte codes.
 	if len(fi.differences) > 0 {
 		return decodeCodesWithDifferences(data, fi)
 	}
 	if fi.isSymbolicZap {
 		// Symbol/ZapfDingbats: codes map to U+F020..U+F0FF display range.
-		var sb strings.Builder
-		for _, b := range data {
-			sb.WriteRune(0xF000 + rune(b))
-		}
-		return sb.String()
-	}
-	if fi.baseEncoding != "" {
-		var sb strings.Builder
-		for _, b := range data {
-			if r, ok := decodeBaseEncodingByte(b, fi.baseEncoding); ok {
-				sb.WriteRune(r)
-			} else {
-				sb.WriteByte(b)
-			}
-		}
-		out := sb.String()
-		if alt, ok2 := tryDecodingWithAltEncoders(data, fi); ok2 {
-			return alt
-		}
-		return out
-	}
-	return string(data)
-}
-
-// decodeLiteralBytes decodes raw bytes from a literal string using font info.
-func decodeLiteralBytes(data []byte, fi *fontInfo) string {
-	// Check for UTF-16BE BOM
-	if len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF {
-		return decodeUTF16BE(data[2:])
-	}
-	if fi == nil {
-		return string(data)
-	}
-	if fi.toUni != nil {
-		if fi.codeSize == 2 {
-			return decodeCodesWithCMap(data, 2, fi.toUni)
-		}
-		return decodeCodesWithCMap(data, 1, fi.toUni)
-	}
-	if fi.isType0 {
-		if fi.cmapFamily != cmapFamilyUnknown {
-			return decodeCJKBytes(fi.cmapFamily, data)
-		}
-		return string(data)
-	}
-	if len(fi.differences) > 0 {
-		return decodeCodesWithDifferences(data, fi)
-	}
-	if fi.isSymbolicZap {
 		var sb strings.Builder
 		for _, b := range data {
 			sb.WriteRune(0xF000 + rune(b))

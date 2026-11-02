@@ -49,8 +49,8 @@ type rawPDFPage struct {
 
 // rawPDFResources holds resource references for a page.
 type rawPDFResources struct {
-	fonts  map[string]int // /F1 -> obj number
-	xobjs  map[string]int // /Im1 -> obj number
+	fonts map[string]int // /F1 -> obj number
+	xobjs map[string]int // /Im1 -> obj number
 }
 
 // newRawPDFParser creates a parser for the given PDF data.
@@ -76,16 +76,34 @@ func (p *rawPDFParser) parse() error {
 // parseObjects finds all "N 0 obj ... endobj" blocks.
 func (p *rawPDFParser) parseObjects() {
 	matches := reObjHeader.FindAllSubmatchIndex(p.data, -1)
+	// Locate all "endobj" markers once, then pair them with object headers
+	// using a two-pointer merge (both are in file order). Scanning from each
+	// object start would be O(objects × filesize) on large PDFs.
+	endObj := []byte("endobj")
+	endPositions := make([]int, 0, len(matches))
+	for pos := 0; ; {
+		idx := bytes.Index(p.data[pos:], endObj)
+		if idx < 0 {
+			break
+		}
+		pos += idx
+		endPositions = append(endPositions, pos)
+		pos += len(endObj)
+	}
+	nextEnd := 0
 	for _, m := range matches {
 		numStr := string(p.data[m[2]:m[3]])
 		num, _ := strconv.Atoi(numStr)
 		objStart := m[0]
-		// find endobj
-		endIdx := bytes.Index(p.data[objStart:], []byte("endobj"))
-		if endIdx < 0 {
+		// find the first endobj at or after this object's start
+		for nextEnd < len(endPositions) && endPositions[nextEnd] < objStart {
+			nextEnd++
+		}
+		if nextEnd >= len(endPositions) {
 			continue
 		}
-		objData := p.data[objStart : objStart+endIdx+6]
+		endPos := endPositions[nextEnd]
+		objData := p.data[objStart : endPos+len(endObj)]
 		obj := rawPDFObject{num: num}
 		// extract dictionary
 		if dictStart := bytes.Index(objData, []byte("<<")); dictStart >= 0 {
@@ -233,65 +251,51 @@ func (p *rawPDFParser) parseInnerObject(num int, body []byte) rawPDFObject {
 // ToUnicode CMaps and object streams.
 func (p *rawPDFParser) decodeStream(raw []byte, dict string) []byte {
 	data := raw
-	// process filters left-to-right
-	for {
-		var filter string
-		if idx := strings.Index(dict, "/Filter"); idx >= 0 {
-			rest := dict[idx+len("/Filter"):]
-			rest = strings.TrimLeft(rest, " \t\r\n")
-			if strings.HasPrefix(rest, "[") {
-				// take the first name in the array, then re-enter with the
-				// remaining filters on the next pass
-				end := strings.Index(rest, "]")
-				if end < 0 {
-					break
-				}
-				names := extractFilterNames(rest[1:end])
-				if len(names) == 0 {
-					break
-				}
-				filter = names[0]
-				// build remaining filter list for next pass
-				remaining := extractFilterNames(rest[1:end])[1:]
-				out := p.applyFilter(filter, data, dict)
-				if len(remaining) == 0 {
-					return out
-				}
-				// recursively apply remaining filters
-				return p.applyFilterChain(out, remaining, dict)
-			}
-			m := reFilterNameChain.FindStringSubmatch(rest)
-			if m == nil {
-				break
-			}
-			filter = m[1]
-			out := p.applyFilter(filter, data, dict)
-			// remove this filter from dict copy to avoid infinite loop
-			dict = dict[:idx] + "/FilterRemoved " + dict[idx+len("/Filter"):]
-			data = out
-			continue
-		}
-		break
-	}
-	return data
-}
-
-func (p *rawPDFParser) applyFilterChain(data []byte, names []string, dict string) []byte {
-	for _, name := range names {
+	for _, name := range streamFilterNames(dict) {
 		data = p.applyFilter(name, data, dict)
 	}
 	return data
 }
 
-var reFilterNameChain = regexp.MustCompile(`^\s*/([A-Za-z0-9]+)`)
-
-func extractFilterNames(s string) []string {
-	var names []string
-	for _, m := range reFilterNameChain.FindAllStringSubmatch(s, -1) {
-		names = append(names, m[1])
+// streamFilterNames extracts the filter list from a dict's /Filter entry —
+// a single name (/FlateDecode) or an array ([/ASCII85Decode /FlateDecode]) —
+// in application order.
+func streamFilterNames(dict string) []string {
+	idx := strings.Index(dict, "/Filter")
+	if idx < 0 {
+		return nil
 	}
-	return names
+	rest := strings.TrimLeft(dict[idx+len("/Filter"):], " \t\r\n")
+	if strings.HasPrefix(rest, "[") {
+		// array of names
+		end := strings.Index(rest, "]")
+		if end < 0 {
+			rest = rest[1:]
+		} else {
+			rest = rest[1:end]
+		}
+		var names []string
+		for _, m := range reFilterEntry.FindAllStringSubmatch(rest, -1) {
+			names = append(names, m[1])
+		}
+		return names
+	}
+	if !strings.HasPrefix(rest, "/") {
+		return nil
+	}
+	rest = rest[1:]
+	// single name: ends at the next delimiter
+	end := strings.IndexAny(rest, " \t\r\n/<>[]")
+	if end < 0 {
+		end = len(rest)
+	}
+	if end == 0 {
+		return nil
+	}
+	return []string{rest[:end]}
 }
+
+var reFilterEntry = regexp.MustCompile(`/([A-Za-z0-9]+)`)
 
 // applyFilter decodes raw data with a single named filter.
 func (p *rawPDFParser) applyFilter(filter string, data []byte, dict string) []byte {

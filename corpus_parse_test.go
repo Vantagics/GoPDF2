@@ -245,10 +245,3 @@ func TestCorpus_MergeTextRunsUnit(t *testing.T) {
 		t.Errorf("line 1 = %q, want 'line2'", lines[1].Text)
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

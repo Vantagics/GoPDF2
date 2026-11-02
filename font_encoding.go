@@ -1,6 +1,7 @@
 package gopdf
 
 import (
+	xencoding "golang.org/x/text/encoding"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -69,23 +70,48 @@ func predefinedCMapFamily(name string) int {
 }
 
 // decodeCJKBytes decodes raw bytes with the legacy encoding matching the family.
-func decodeCJKBytes(family int, data []byte) string {
-	var dec interface{ Bytes([]byte) ([]byte, error) }
+// Decoders are cached — x/text decoder creation allocates and these fire
+// per string token during extraction.
+var cjkDecoders = map[int]*cachedDecoder{}
+
+type cachedDecoder struct {
+	decode func([]byte) ([]byte, error)
+}
+
+func decoderForFamily(family int) *cachedDecoder {
+	if d, ok := cjkDecoders[family]; ok {
+		return d
+	}
+	var enc interface {
+		NewDecoder() *xencoding.Decoder
+	}
 	switch family {
 	case cmapFamilyGBK:
-		dec = simplifiedchinese.GBK.NewDecoder()
+		enc = simplifiedchinese.GBK
 	case cmapFamilyBig5:
-		dec = traditionalchinese.Big5.NewDecoder()
+		enc = traditionalchinese.Big5
 	case cmapFamilyEUCKR:
-		dec = korean.EUCKR.NewDecoder()
+		enc = korean.EUCKR
 	case cmapFamilySJIS:
-		dec = japanese.ShiftJIS.NewDecoder()
+		enc = japanese.ShiftJIS
 	case cmapFamilyEUCJP:
-		dec = japanese.EUCJP.NewDecoder()
+		enc = japanese.EUCJP
 	default:
+		return nil
+	}
+	dec := enc.NewDecoder()
+	d := &cachedDecoder{decode: dec.Bytes}
+	cjkDecoders[family] = d
+	return d
+}
+
+// decodeCJKBytes decodes raw bytes with the legacy encoding matching the family.
+func decodeCJKBytes(family int, data []byte) string {
+	d := decoderForFamily(family)
+	if d == nil {
 		return string(data)
 	}
-	out, err := dec.Bytes(data)
+	out, err := d.decode(data)
 	if err != nil {
 		return string(data)
 	}
@@ -354,13 +380,13 @@ var glyphNameUnicode = map[string]rune{
 	"quotedblright": 0x201D, "quotesinglbase": 0x201A, "quotedblbase": 0x201E,
 	"guillemotleft": 0x00AB, "guillemotright": 0x00BB, "guilsinglleft": 0x2039,
 	"guilsinglright": 0x203A,
-	"endash": 0x2013, "emdash": 0x2014, "bullet": 0x2022, "dagger": 0x2020,
+	"endash":         0x2013, "emdash": 0x2014, "bullet": 0x2022, "dagger": 0x2020,
 	"daggerdbl": 0x2021, "ellipsis": 0x2026, "perthousand": 0x2030,
 	"fraction": 0x2044, "florin": 0x0192, "circumflex": 0x02C6, "caron": 0x02C7,
 	"breve": 0x02D8, "dotaccent": 0x02D9, "ring": 0x02DA, "ogonek": 0x02DB,
 	"tilde": 0x02DC, "hungarumlaut": 0x02DD, "macron": 0x00AF, "acute": 0x00B4,
 	"cedilla": 0x00B8,
-	"fi": 0xFB01, "fl": 0xFB02, "ff": 0xFB00, "ffi": 0xFB03, "ffl": 0xFB04,
+	"fi":      0xFB01, "fl": 0xFB02, "ff": 0xFB00, "ffi": 0xFB03, "ffl": 0xFB04,
 	"Euro": 0x20AC, "trademark": 0x2122, "registered": 0x00AE, "copyright": 0x00A9,
 	"trademarkserif": 0x2122, "registerserif": 0x00AE, "copyrightserif": 0x00A9,
 	"exclamdown": 0x00A1, "cent": 0x00A2, "sterling": 0x00A3, "currency": 0x00A4,
@@ -413,7 +439,7 @@ var glyphNameUnicode = map[string]rune{
 	"arrowboth": 0x2194, "arrowupdn": 0x2195, "arrowdblup": 0x21D1,
 	"arrowdbldown": 0x21D3, "arrowdblleft": 0x21D0, "arrowdblright": 0x21D2,
 	"arrowdblboth": 0x21D4,
-	"lozenge": 0x25CA, "diamond": 0x25C7, "square": 0x25A1, "circle": 0x25CB,
+	"lozenge":      0x25CA, "diamond": 0x25C7, "square": 0x25A1, "circle": 0x25CB,
 	"triangle": 0x25B3, "dotmath": 0x22C5, "asteriskmath": 0x2217,
 	"divisionslash": 0x2215, "logicaland": 0x2227, "logicalor": 0x2228,
 	"intersection": 0x2229, "union": 0x222A,

@@ -97,7 +97,7 @@ type htmlRenderer struct {
 	style   *htmlStyleResolver
 
 	// pagination state
-	paginate    bool // automatic page breaks enabled
+	paginate    bool        // automatic page breaks enabled
 	activeTable []*htmlNode // pending <thead> rows to repeat after breaks
 	brokePage   bool
 }
@@ -202,20 +202,23 @@ func (gp *GoPdf) InsertHTMLPaginated(x, y, w float64, htmlStr string, opt HTMLBo
 		// default: a little above the page bottom margin
 		opt.PageBottom = gp.margins.Bottom + 20
 	}
+	if opt.PageTop <= 0 {
+		opt.PageTop = y
+	}
 
 	nodes := parseHTML(htmlStr)
 
 	r := &htmlRenderer{
-		gp:        gp,
-		opt:       opt,
-		boxX:      x,
-		boxY:      y,
-		boxW:      w,
-		boxH:      opt.PageBottom - y, // effective first page
-		cursorX:   x,
-		cursorY:   y,
-		style:     newHTMLStyleResolver(nodes),
-		paginate:  true,
+		gp:       gp,
+		opt:      opt,
+		boxX:     x,
+		boxY:     y,
+		boxW:     w,
+		boxH:     opt.PageBottom - y, // effective first page
+		cursorX:  x,
+		cursorY:  y,
+		style:    newHTMLStyleResolver(nodes),
+		paginate: true,
 	}
 
 	state := r.initialState()
@@ -298,7 +301,11 @@ func (r *htmlRenderer) renderNodes(nodes []*htmlNode, state htmlRenderState) err
 func (r *htmlRenderer) renderNode(node *htmlNode, state htmlRenderState) error {
 	if node.Type == htmlNodeText {
 		// bare text outside a block: flow it as an implicit paragraph
-		return r.renderInlineTextRun(node.Text, state, nil)
+		text := transformText(collapseWhitespace(node.Text), state.transform)
+		if text == "" {
+			return nil
+		}
+		return r.renderTextFragments(splitToFragments(text, state), state, nil, 0)
 	}
 
 	// element node
@@ -597,10 +604,6 @@ func (r *htmlRenderer) addVerticalSpace(ptSpace float64) {
 	r.cursorY += ptSpace / r.unitConversion()
 }
 
-func (r *htmlRenderer) remainingWidth() float64 {
-	return r.boxX + r.boxW - r.cursorX
-}
-
 // applyFont sets the current font/text color for a state.
 func (r *htmlRenderer) applyFont(state htmlRenderState) error {
 	family := r.resolveFontFamily(state)
@@ -646,28 +649,6 @@ func (r *htmlRenderer) resolveFontFamily(state htmlRenderState) string {
 // ============================================================
 // Inline text rendering with decorations
 // ============================================================
-
-// renderInlineTextRun renders a raw text run at the current cursor position
-// with word wrapping and decorations. Used for text outside blocks and for
-// simple flows (legacy path).
-func (r *htmlRenderer) renderInlineTextRun(text string, state htmlRenderState, stopAt func() bool) error {
-	text = transformText(collapseWhitespace(text), state.transform)
-	if text == "" {
-		return nil
-	}
-	if state.preformed {
-		text = strings.ReplaceAll(text, "\t", "    ")
-		for _, line := range strings.Split(text, "\n") {
-			if err := r.renderTextFragments([]textFragment{{text: line, kind: fragWord, state: state}}, state, nil, 0); err != nil {
-				return err
-			}
-			r.cursorX = r.boxX
-			r.cursorY += r.lineHeightOf(state)
-		}
-		return nil
-	}
-	return r.renderTextFragments(splitToFragments(text, state), state, stopAt, 0)
-}
 
 // renderBlock renders a block-level element (p, div, h*, pre, ...) as a
 // paragraph: collects inline content into fragments, lays out lines, then
@@ -739,6 +720,7 @@ type textFragment struct {
 	width float64
 	space bool // rendered as whitespace
 	img   *imageFragmentData
+	link  string          // href for <a> fragments (annotation drawn at rect)
 	state htmlRenderState // state at this fragment
 }
 
@@ -889,6 +871,21 @@ func (r *htmlRenderer) collectInlineFragments(nodes []*htmlNode, state htmlRende
 		case "img":
 			if imgFrag := r.newImageFragment(node, st); imgFrag != nil {
 				*frags = append(*frags, *imgFrag)
+			}
+		case "a":
+			// inline link: style the runs and record the href so the
+			// clickable annotation is drawn at the rendered rect
+			if _, hasColor := r.style.resolve(node)["color"]; !hasColor {
+				st.colorR, st.colorG, st.colorB = 0, 0, 255
+			}
+			st.fontStyle |= Underline
+			href := node.Attrs["href"]
+			before := len(*frags)
+			r.collectInlineFragments(node.Children, st, frags, blocks)
+			for i := before; i < len(*frags); i++ {
+				if (*frags)[i].link == "" {
+					(*frags)[i].link = href
+				}
 			}
 		default:
 			r.collectInlineFragments(node.Children, st, frags, blocks)
@@ -1197,6 +1194,8 @@ func (r *htmlRenderer) renderTextFragments(frags []textFragment, state htmlRende
 				extraSpace = (r.boxW - lineW) / float64(spaceCount)
 			}
 		}
+		// position the line start for Center/Right (Left/Justify start at boxX)
+		r.cursorX = x
 
 		for i := range line {
 			f := &line[i]
@@ -1211,7 +1210,7 @@ func (r *htmlRenderer) renderTextFragments(frags []textFragment, state htmlRende
 				}
 				r.cursorX += w + extraSpace
 			case fragImage:
-				if err := r.drawImageFragment(f, x); err != nil {
+				if err := r.drawImageFragment(f); err != nil {
 					return err
 				}
 			case fragWord, fragCJK:
@@ -1256,6 +1255,8 @@ func (r *htmlRenderer) renderFragmentText(f *textFragment, lh, extraSpace float6
 		}
 	}
 
+	xStart := r.cursorX
+
 	// background highlight
 	if f.state.hasBg {
 		r.gp.SetFillColor(f.state.bgR, f.state.bgG, f.state.bgB)
@@ -1291,6 +1292,12 @@ func (r *htmlRenderer) renderFragmentText(f *textFragment, lh, extraSpace float6
 		// spacing after last char already included in w
 	}
 	_ = extraSpace
+
+	// clickable link annotation for <a> fragments
+	if f.link != "" {
+		r.gp.AddExternalLink(f.link, r.gp.UnitsToPoints(xStart), r.gp.UnitsToPoints(r.cursorY),
+			r.gp.UnitsToPoints(w), r.gp.UnitsToPoints(lh))
+	}
 	return nil
 }
 
@@ -1353,7 +1360,7 @@ func (r *htmlRenderer) newImageFragment(node *htmlNode, state htmlRenderState) *
 }
 
 // drawImageFragment renders an inline image at the cursor.
-func (r *htmlRenderer) drawImageFragment(f *textFragment, x float64) error {
+func (r *htmlRenderer) drawImageFragment(f *textFragment) error {
 	if r.cursorY-r.boxY+f.img.h > r.boxH {
 		if !r.paginate {
 			return nil
@@ -1634,28 +1641,6 @@ func bulletMarker(listStyle string, depth int) string {
 	return "•"
 }
 
-// listMarkers is kept for API compat with earlier tests.
-func (r *htmlRenderer) listMarkers(n int, ordered bool) (markers []string, widths []float64, maxW float64) {
-	markers = make([]string, n)
-	widths = make([]float64, n)
-	if n <= 0 {
-		return markers, widths, 0
-	}
-	for i := 0; i < n; i++ {
-		if ordered {
-			markers[i] = strconv.Itoa(i+1) + "."
-		} else {
-			markers[i] = "•"
-		}
-		w, _ := r.gp.MeasureTextWidth(markers[i])
-		widths[i] = w
-		if w > maxW {
-			maxW = w
-		}
-	}
-	return markers, widths, maxW
-}
-
 // listMarkerLayout sizes the marker column so multi-digit labels never
 // overflow into item text.
 //
@@ -1800,7 +1785,7 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 			}
 			curY = r.cursorY
 			rowOffset = 0
-	_ = rowOffset // (reserved for rowspan handling)
+			_ = rowOffset // (reserved for rowspan handling)
 		}
 		for _, cell := range cellsByRow[row] {
 			if cell.node == nil {
@@ -1822,7 +1807,7 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 				continue // clipped
 			}
 			cellState := cell.state
-			if err := r.drawHTMLTableCell(node, x, curY, w, h, cell, cellState, padding, tblBG, tblBorder); err != nil {
+			if err := r.drawHTMLTableCell(x, curY, w, h, cell, cellState, padding, tblBG, tblBorder); err != nil {
 				return err
 			}
 		}
@@ -1835,8 +1820,6 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 	r.addVerticalSpace(state.fontSize * 0.2)
 	return nil
 }
-
-
 
 // buildTableGrid builds the table cell grid, resolving colspan/rowspan.
 func (r *htmlRenderer) buildTableGrid(node *htmlNode, state htmlRenderState) *htmlGrid {
@@ -1933,8 +1916,8 @@ func parseSpanAttr(s string) int {
 }
 
 type htmlGrid struct {
-	rows int
-	cols int
+	rows  int
+	cols  int
 	cells []htmlTableCell
 }
 
@@ -2211,7 +2194,7 @@ func parseCSSBorderColor(b string) (string, string) {
 }
 
 // drawHTMLTableCell renders one table cell.
-func (r *htmlRenderer) drawHTMLTableCell(tableNode *htmlNode, x, y, w, h float64, cell htmlTableCell, cellState htmlRenderState, padding float64, tblBG htmlSurface, tblBorder htmlBorderSpec) error {
+func (r *htmlRenderer) drawHTMLTableCell(x, y, w, h float64, cell htmlTableCell, cellState htmlRenderState, padding float64, tblBG htmlSurface, tblBorder htmlBorderSpec) error {
 	// background: explicit cell bg > header default > table bg
 	hasBG := false
 	bgR, bgG, bgB := uint8(0), uint8(0), uint8(0)
@@ -2258,19 +2241,25 @@ func (r *htmlRenderer) drawHTMLTableCell(tableNode *htmlNode, x, y, w, h float64
 	r.cursorX = r.boxX
 	r.cursorY = r.boxY
 
-	err := r.flowBlock(cell.node.Children, cellState, 0)
-	// v-align: bottom/middle shift content when the cell is taller
-	if err == nil && (cellState.vAlign == Middle || cellState.vAlign == Bottom) {
-		contentH := r.cursorY - r.boxY
+	// v-align middle/bottom: estimate the content height (text-based) and
+	// pre-shift the content box inside the cell before flowing.
+	if cellState.vAlign == Middle || cellState.vAlign == Bottom {
 		avail := h - padding*2
-		if contentH < avail {
-			shift := avail - contentH
-			if cellState.vAlign == Middle {
-				shift /= 2
+		if avail > 0 {
+			estH, merr := r.measureWrappedTextHeight(extractHTMLNodeText(cell.node), cellState, w-padding*2)
+			if merr == nil {
+				shift := avail - estH
+				if shift > 0 {
+					if cellState.vAlign == Middle {
+						shift /= 2
+					}
+					r.boxY += shift
+					r.cursorY += shift
+				}
 			}
-			_ = shift // shifting already-drawn content is not possible; acceptable v1
 		}
 	}
+	err := r.flowBlock(cell.node.Children, cellState, 0)
 
 	r.cursorX, r.cursorY = prevX, prevY
 	r.boxX, r.boxY, r.boxW, r.boxH = prevBoxX, prevBoxY, prevBoxW, prevBoxH
@@ -2295,33 +2284,6 @@ func extractHTMLNodeText(node *htmlNode) string {
 	return collapseWhitespace(strings.Join(parts, " "))
 }
 
-func (r *htmlRenderer) measureHTMLTableRowHeight(row htmlTableRow, colWidth, padding float64, fallback htmlRenderState) (float64, error) {
-	maxHeight := 0.0
-	contentWidth := colWidth - padding*2
-	if contentWidth <= 0 {
-		contentWidth = colWidth
-	}
-	for _, cell := range row.cells {
-		cellState := cell.state
-		if cellState.fontSize <= 0 {
-			cellState = fallback
-		}
-		text := ""
-		if cell.node != nil {
-			text = extractHTMLNodeText(cell.node)
-		}
-		height, err := r.measureWrappedTextHeight(text, cellState, contentWidth)
-		if err != nil {
-			return 0, err
-		}
-		height += padding * 2
-		if height > maxHeight {
-			maxHeight = height
-		}
-	}
-	return maxHeight, nil
-}
-
 func (r *htmlRenderer) measureWrappedTextHeight(text string, state htmlRenderState, maxWidth float64) (float64, error) {
 	if err := r.applyFont(state); err != nil {
 		return 0, err
@@ -2340,25 +2302,7 @@ func (r *htmlRenderer) measureWrappedTextHeight(text string, state htmlRenderSta
 	if mul <= 0 {
 		mul = 1.2
 	}
-	return float64(len(lines)) * state.fontSize*mul/r.unitConversion(), nil
-}
-
-func (r *htmlRenderer) measureLongWordLines(word string, maxWidth float64) (int, error) {
-	lines := 1
-	lineWidth := 0.0
-	for _, ch := range word {
-		chWidth, err := r.gp.MeasureTextWidth(string(ch))
-		if err != nil {
-			return 0, err
-		}
-		if lineWidth > 0 && lineWidth+chWidth > maxWidth {
-			lines++
-			lineWidth = chWidth
-		} else {
-			lineWidth += chWidth
-		}
-	}
-	return lines, nil
+	return float64(len(lines)) * state.fontSize * mul / r.unitConversion(), nil
 }
 
 // collapseWhitespace collapses consecutive whitespace characters into a single space.
@@ -2377,11 +2321,6 @@ func collapseWhitespace(s string) string {
 		}
 	}
 	return strings.TrimSpace(result.String())
-}
-
-// splitWords splits text into words by spaces.
-func splitWords(text string) []string {
-	return strings.Fields(text)
 }
 
 func imageHolderDimensions(holder ImageHolder) (float64, float64, error) {

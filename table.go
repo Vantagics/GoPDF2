@@ -77,20 +77,20 @@ type TableLayout interface {
 
 // Represents the layout of a table
 type tableLayout struct {
-	pdf            *GoPdf     // Reference to the GoPdf instance
-	startX         float64    // Starting X coordinate of the table
-	startY         float64    // Starting Y coordinate of the table
-	rowHeight      float64    // Height of each row in the table (minimum when auto)
-	columns        []column   // Slice of column definitions
-	rows           [][]RowCell // Slice of rows, each containing cell contents
-	maxRows        int        // Maximum number of rows in the table
-	padding        float64    // Padding inside each cell
-	cellOption     CellOption // Options for cell content rendering
-	tableStyle     CellStyle  // Style for the entire table
-	headerStyle    CellStyle  // Style for the header row
-	cellStyle      CellStyle  // Style for regular cells
-	autoRowHeight  bool       // grow rows to fit wrapped content
-	paginate       bool       // break pages and repeat headers
+	pdf           *GoPdf      // Reference to the GoPdf instance
+	startX        float64     // Starting X coordinate of the table
+	startY        float64     // Starting Y coordinate of the table
+	rowHeight     float64     // Height of each row in the table (minimum when auto)
+	columns       []column    // Slice of column definitions
+	rows          [][]RowCell // Slice of rows, each containing cell contents
+	maxRows       int         // Maximum number of rows in the table
+	padding       float64     // Padding inside each cell
+	cellOption    CellOption  // Options for cell content rendering
+	tableStyle    CellStyle   // Style for the entire table
+	headerStyle   CellStyle   // Style for the header row
+	cellStyle     CellStyle   // Style for regular cells
+	autoRowHeight bool        // grow rows to fit wrapped content
+	paginate      bool        // break pages and repeat headers
 }
 
 var _ TableLayout = (*tableLayout)(nil)
