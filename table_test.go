@@ -1,6 +1,9 @@
 package gopdf_test
 
 import (
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/VantageDataChat/GoPDF2"
@@ -375,4 +378,72 @@ func TestTableWithStyledRows(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error saving PDF: %v", err)
 	}
+}
+
+// TestTable_AutoHeightAndPagination verifies auto row heights, multi-page
+// tables with repeated headers, and colspan cells.
+func TestTable_AutoHeightAndPagination(t *testing.T) {
+	pdf := gopdf.GoPdf{}
+	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4})
+	pdf.AddPage()
+	if err := pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pdf.SetFont("lib", "", 10); err != nil {
+		t.Fatal(err)
+	}
+	pdf.SetMargins(50, 50, 50, 50)
+
+	table := pdf.NewTableLayout(50, 60, 20, 0)
+	table.AddColumn("ID", 60, "left")
+	table.AddColumn("Description", 300, "left")
+	table.AddColumn("Amount", 80, "right")
+	table.SetAutoRowHeight(true)
+	table.SetPaginate(true)
+
+	// long description that wraps -> auto height row
+	long := "This is a long description that must wrap across several lines inside the table cell to trigger auto row height measurement and verify that nothing overlaps."
+	table.AddStyledRow([]gopdf.RowCell{
+		gopdf.NewRowCell("1", gopdf.CellStyle{}),
+		gopdf.NewRowCell(long, gopdf.CellStyle{}),
+		gopdf.NewRowCell("10.00", gopdf.CellStyle{}),
+	})
+	// colspan row
+	table.AddStyledRow([]gopdf.RowCell{
+		gopdf.NewRowCellSpan("This cell spans the first two columns", gopdf.CellStyle{}, 2),
+		gopdf.NewRowCell("99.50", gopdf.CellStyle{}),
+	})
+	// many rows to force pagination
+	for i := 0; i < 60; i++ {
+		table.AddRow([]string{itoaT(i+2), "row " + itoaT(i+2), "1.00"})
+	}
+
+	if err := table.DrawTable(); err != nil {
+		t.Fatal(err)
+	}
+	path := "test_table_paginate.pdf"
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := gopdf.GetSourcePDFPageCountFromBytes(data); err != nil || n < 2 {
+		t.Fatalf("expected multi-page table, got %d pages (err %v)", n, err)
+	}
+	// repeated header on later pages
+	text, err := gopdf.ExtractAllPagesText(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(text, "Description") < 2 {
+		t.Errorf("header not repeated across pages")
+	}
+}
+
+func itoaT(i int) string {
+	return strconv.Itoa(i)
 }
