@@ -142,6 +142,15 @@ func parseFormula(s string) []*formulaToken {
 			}
 			i = j
 			switch name {
+			case "binom":
+				// binomial coefficient: ( n over k ) with big parens
+				top := readArg()
+				bot := readArg()
+				tok := &formulaToken{kind: 'b'}
+				tok.children = append(tok.children, top...)
+				tok.children = append(tok.children, &formulaToken{kind: '|'})
+				tok.children = append(tok.children, bot...)
+				tokens = append(tokens, tok)
 			case "frac":
 				num := readArg()
 				den := readArg()
@@ -310,6 +319,35 @@ func (gp *GoPdf) measureFormulaLayout(tokens []*formulaToken, fontSize float64) 
 			if sm.ascent+fontSize*0.2 > m.ascent {
 				m.ascent = sm.ascent + fontSize*0.2
 			}
+		case 'b':
+			var top, bot []*formulaToken
+			seenSep := false
+			for _, c := range tok.children {
+				if c.kind == '|' {
+					seenSep = true
+					continue
+				}
+				if seenSep {
+					bot = append(bot, c)
+				} else {
+					top = append(top, c)
+				}
+			}
+			tm := gp.measureFormulaLayout(top, scriptSize)
+			bm := gp.measureFormulaLayout(bot, scriptSize)
+			w := tm.width
+			if bm.width > w {
+				w = bm.width
+			}
+			m.width += w + fontSize*0.6
+			asc := fontSize*0.55 + tm.descent
+			desc := fontSize*0.55 + bm.ascent
+			if asc > m.ascent {
+				m.ascent = asc
+			}
+			if desc > m.descent {
+				m.descent = desc
+			}
 		}
 	}
 	return m
@@ -348,6 +386,7 @@ func (gp *GoPdf) DrawFormula(x, y float64, latex string, fontSize float64, opt *
 	return m.ascent + m.descent + fontSize*0.3, nil
 }
 
+
 // renderFormulaTokens draws tokens with baseline at (x, baselineY).
 func (gp *GoPdf) renderFormulaTokens(tokens []*formulaToken, x, baselineY, fontSize float64) error {
 	scriptSize := fontSize * 0.7
@@ -355,10 +394,10 @@ func (gp *GoPdf) renderFormulaTokens(tokens []*formulaToken, x, baselineY, fontS
 	for _, tok := range tokens {
 		switch tok.kind {
 		case 't':
+			// Activate this level's font size (scripts render smaller).
+			// The content writer reads curr.FontSize at append time.
+			gp.curr.FontSize = fontSize
 			w, _ := gp.MeasureTextWidth(tok.text)
-			if gp.curr.FontSize > 0 {
-				w = w * fontSize / gp.curr.FontSize
-			}
 			gp.SetXY(cur, baselineY-fontSize)
 			rect := &Rect{W: w + 2, H: fontSize * 1.3}
 			if err := gp.CellWithOption(rect, tok.text, CellOption{Align: Left | Top}); err != nil {
@@ -370,12 +409,14 @@ func (gp *GoPdf) renderFormulaTokens(tokens []*formulaToken, x, baselineY, fontS
 			if err := gp.renderFormulaTokens(tok.children, cur, baselineY-fontSize*0.35, scriptSize); err != nil {
 				return err
 			}
+			gp.curr.FontSize = fontSize
 			cur += sm.width
 		case '_':
 			sm := gp.measureFormulaLayout(tok.children, scriptSize)
 			if err := gp.renderFormulaTokens(tok.children, cur, baselineY+fontSize*0.25, scriptSize); err != nil {
 				return err
 			}
+			gp.curr.FontSize = fontSize
 			cur += sm.width
 		case 'f':
 			var num, den []*formulaToken
@@ -432,6 +473,54 @@ func (gp *GoPdf) renderFormulaTokens(tokens []*formulaToken, x, baselineY, fontS
 			gp.SetLineWidth(0.6)
 			gp.Line(cur, baselineY-sm.ascent-fontSize*0.15, cur+sm.width, baselineY-sm.ascent-fontSize*0.15)
 			cur += sm.width + wR*0.4
+		case 'b':
+			var top, bot []*formulaToken
+			seenSep := false
+			for _, c := range tok.children {
+				if c.kind == '|' {
+					seenSep = true
+					continue
+				}
+				if seenSep {
+					bot = append(bot, c)
+				} else {
+					top = append(top, c)
+				}
+			}
+			tm := gp.measureFormulaLayout(top, scriptSize)
+			bm := gp.measureFormulaLayout(bot, scriptSize)
+			w := tm.width
+			if bm.width > w {
+				w = bm.width
+			}
+			// parentheses scaled to the stack height
+			parenH := fontSize * 1.5
+			parenTop := baselineY - fontSize*0.85
+			drawBigParen := func(px float64, open bool) {
+				gp.SetLineWidth(0.7)
+				half := parenH / 2
+				midX := px
+				if open {
+					gp.Line(px+fontSize*0.12, parenTop, midX, parenTop+half)
+					gp.Line(midX, parenTop+half, px+fontSize*0.12, parenTop+parenH)
+				} else {
+					gp.Line(px, parenTop, px+fontSize*0.12, parenTop+half)
+					gp.Line(px+fontSize*0.12, parenTop+half, px, parenTop+parenH)
+				}
+			}
+			drawBigParen(cur, true)
+			inner := cur + fontSize*0.25
+			topBaseline := baselineY - fontSize*0.35
+			if err := gp.renderFormulaTokens(top, inner+(w-tm.width)/2, topBaseline, scriptSize); err != nil {
+				return err
+			}
+			botBaseline := baselineY + fontSize*0.45
+			if err := gp.renderFormulaTokens(bot, inner+(w-bm.width)/2, botBaseline, scriptSize); err != nil {
+				return err
+			}
+			drawBigParen(inner + w + fontSize*0.05, false)
+			gp.curr.FontSize = fontSize
+			cur += w + fontSize*0.6
 		}
 	}
 	return nil

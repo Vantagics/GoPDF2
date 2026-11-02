@@ -606,9 +606,12 @@ func (r *htmlRenderer) applyFont(state htmlRenderState) error {
 	family := r.resolveFontFamily(state)
 	style := state.fontStyle &^ Underline // underline is a decoration, not a font
 	if err := r.gp.SetFontWithStyle(family, style, state.fontSize); err != nil {
-		// fallback to default family
-		if err2 := r.gp.SetFontWithStyle(r.opt.DefaultFontFamily, Regular, state.fontSize); err2 != nil {
-			return err
+		// degrade gracefully: same family regular, then same family default
+		// style, then the default family regular
+		if err2 := r.gp.SetFontWithStyle(family, Regular, state.fontSize); err2 != nil {
+			if err3 := r.gp.SetFontWithStyle(r.opt.DefaultFontFamily, Regular, state.fontSize); err3 != nil {
+				return err
+			}
 		}
 	}
 	r.gp.curr.TextRise = state.rise
@@ -620,6 +623,11 @@ func (r *htmlRenderer) resolveFontFamily(state htmlRenderState) string {
 	isBold := state.fontStyle&Bold == Bold
 	isItalic := state.fontStyle&Italic == Italic
 
+	// An explicit CSS font-family on this element wins over the option-level
+	// bold/italic families (needed e.g. for CJK spans inside styled docs).
+	if state.fontFamily != "" && state.fontFamily != r.opt.DefaultFontFamily {
+		return state.fontFamily
+	}
 	if isBold && isItalic && r.opt.BoldItalicFontFamily != "" {
 		return r.opt.BoldItalicFontFamily
 	}

@@ -157,9 +157,9 @@ func (c *cacheContentText) write(w io.Writer, protection *PDFProtection) error {
 
 	fmt.Fprintf(w, "%0.2f %0.2f TD\n", x, y)
 	fmt.Fprintf(w, "/F%d %s Tf %s Tc\n", c.fontCountIndex, FormatFloatTrim(c.fontSize), FormatFloatTrim(c.charSpacing))
-	if c.textRise != 0 {
-		fmt.Fprintf(w, "%s Ts\n", FormatFloatTrim(c.textRise))
-	}
+	// Always emit Ts: the PDF graphics state persists across BT/ET blocks,
+	// so a rise that is not explicitly reset would leak into all later text.
+	fmt.Fprintf(w, "%s Ts\n", FormatFloatTrim(c.textRise))
 
 	if c.txtColorMode == "color" {
 		c.textColor.write(w, protection)
