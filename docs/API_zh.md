@@ -163,21 +163,75 @@ func (gp *GoPdf) IsFitMultiCell(rectangle *Rect, text string) (bool, float64, er
 
 ```go
 func (gp *GoPdf) InsertHTMLBox(x, y, w, h float64, htmlStr string, opt HTMLBoxOption) (float64, error)
+func (gp *GoPdf) InsertHTMLPaginated(x, y, w float64, htmlStr string, opt HTMLBoxOption) (float64, error)
 ```
 
-将 HTML 内容渲染到 PDF 页面的指定矩形区域内。
+将 HTML 内容渲染到 PDF 页面的指定矩形区域内。`InsertHTMLBox` 在盒子高度处截断内容（旧行为）；`InsertHTMLPaginated` 让内容自动跨页流动——内容超过 `opt.PageBottom` 时自动添加新页并从 `opt.PageTop` 继续渲染，支持表格表头跨页重复（`opt.RepeatTableHeaders`）与 `opt.OnPageBreak` 回调。
 
 **参数：** `x, y`（左上角坐标）、`w, h`（区域尺寸）、`htmlStr`（HTML 字符串）、`opt`（渲染选项）。
 
 **返回值：** 最后渲染内容之后的 Y 坐标。
 
-**支持的标签：** `<b>`、`<strong>`、`<i>`、`<em>`、`<u>`、`<br>`、`<p>`、`<div>`、`<h1>`-`<h6>`、`<font>`、`<span>`、`<img>`、`<ul>`、`<ol>`、`<li>`、`<hr>`、`<center>`、`<a>`、`<blockquote>`、`<sub>`、`<sup>`
+**支持的标签：** `<b>`、`<strong>`、`<i>`、`<em>`、`<u>`、`<s>`/`<strike>`/`<del>`（真实删除线）、`<br>`、`<p>`、`<div>`、`<h1>`-`<h6>`、`<font>`、`<span>`、`<small>`、`<big>`、`<img>`（文件路径与 base64 Data URI）、`<ul>`/`<ol>`（嵌套、`start`、`type` 十进制/字母/罗马数字）、`<hr>`、`<center>`、`<a>`（含样式与可点击注释）、`<blockquote>`、`<sub>`、`<sup>`、`<pre>`/`<code>`/`<tt>`、`<style>`、`<script>`（忽略）、完整 `<table>`（`<thead>`/`<tbody>`/`<tfoot>`/`<tr>`/`<th>`/`<td>`/`<caption>`/`<colgroup>`/`<col>`、colspan/rowspan、单元格对齐与背景色）
 
-**支持的内联 CSS 属性：** `color`、`font-size`、`font-family`、`font-weight`、`font-style`、`text-decoration`、`text-align`
+**CSS：** `<style>` 样式块支持 标签 / `.class` / `#id` 选择器（优先级 id > class > 标签）；内联 `style="..."` 覆盖层叠规则。
 
-**颜色格式：** `#RGB`、`#RRGGBB`、`rgb(r,g,b)`、CSS 命名颜色
+**支持的 CSS 属性：** `color`、`background-color`、`font-size`、`font-family`、`font-weight`、`font-style`、`text-decoration`、`text-align`（含 `justify` 两端对齐）、`text-transform`、`text-indent`、`line-height`、`letter-spacing`、`vertical-align`、`width`（表格/单元格/图片）、`margin-top`、`margin-bottom`、`white-space`
+
+**中文换行：** CJK 文本按字符断行并遵循避头尾规则（行首不出现标点、行尾不出现开括号）。
+
+**颜色格式：** `#RGB`、`#RRGGBB`、`rgb(r,g,b)`、`rgba(r,g,b,a)`（alpha 忽略）、CSS 命名颜色
 
 **字号格式：** `12pt`、`16px`、`1.5em`、`150%`、命名尺寸（small、medium、large 等）
+
+---
+
+## 表格布局
+
+```go
+func (gp *GoPdf) NewTableLayout(startX, startY, rowHeight float64, maxRows int) TableLayout
+```
+
+```go
+type TableLayout interface {
+    AddColumn(header string, width float64, align string)
+    AddRow(row []string)
+    AddStyledRow(row []RowCell)
+    SetTableStyle(style CellStyle)
+    SetHeaderStyle(style CellStyle)
+    SetCellStyle(style CellStyle)
+    DrawTable() error
+    SetAutoRowHeight(auto bool) // 行高随内容自动增长
+    SetPaginate(paginate bool)  // 跨页表格并重复表头
+}
+```
+
+- `SetAutoRowHeight(true)` 按换行后的单元格文本测量并自动增高行（`rowHeight` 成为最小值）。
+- `SetPaginate(true)` 当行越过下边距时自动换页并在每一续页重绘表头行。
+- `NewRowCellSpan(content, style, colspan)` 创建跨多列的合并单元格。
+
+---
+
+## 公式渲染
+
+```go
+func (gp *GoPdf) DrawFormula(x, y float64, latex string, fontSize float64, opt *FormulaOption) (float64, error)
+func (gp *GoPdf) MeasureFormula(latex string, fontSize float64) (width float64, height float64, err error)
+```
+
+以实用的 LaTeX 精简子集渲染公式：
+
+- 上下标：`x^2`、`a_i`、`x^{n+1}`
+- 分数：`rac{a}{b}`
+- 根号（带上划线）：`\sqrt{x}`
+- 二项式（带括号）：`inom{n}{k}`
+- 希腊字母：`lpha` ... `\Omega`
+- 运算符与符号：`\sum`、`\int`、`\prod`、`	imes`、`\cdot`、`\pm`、`\leq`、`\geq`、`
+eq`、`pprox`、`\infty`、`ightarrow`、`\partial`、`
+abla` 等
+- 函数名：`\sin`、`\cos`、`\log`、`\lim` 等
+
+`FormulaOption` 可指定字体族、颜色与斜体。默认使用当前字体；建议选用数学符号覆盖良好的字体（STIX、DejaVu、Liberation）。
 
 ---
 
@@ -968,6 +1022,10 @@ type TOCItem struct {
 func ExtractTextFromPage(pdfData []byte, pageIndex int) ([]ExtractedText, error)
 func ExtractTextFromAllPages(pdfData []byte) (map[int][]ExtractedText, error)
 func ExtractPageText(pdfData []byte, pageIndex int) (string, error)
+func ExtractPageLines(pdfData []byte, pageIndex int) ([]TextLine, error)
+func ExtractAllPagesLines(pdfData []byte) (map[int][]TextLine, error)
+func MergeTextRuns(runs []ExtractedText) []ExtractedText
+func GroupIntoTextLines(runs []ExtractedText) []TextLine
 ```
 
 从已有 PDF 文件中提取文本内容。这些是包级函数（非 GoPdf 方法）。
@@ -975,6 +1033,11 @@ func ExtractPageText(pdfData []byte, pageIndex int) (string, error)
 - `ExtractTextFromPage` — 从单个页面（0 起始索引）提取带位置、字体、字号信息的文本项。
 - `ExtractTextFromAllPages` — 从所有页面提取文本，返回页面索引到文本项的映射。
 - `ExtractPageText` — 便捷包装，将页面所有文本作为单个字符串返回。
+- `ExtractPageLines` — 将碎片化的文本项按位置合并为可读的单词与行（推荐用于逐字形 Tj 流的真实 PDF）。
+- `ExtractAllPagesLines` — 解析一次 PDF 并返回每一页的合并行（优先于循环调用 `ExtractPageLines`）。
+- `MergeTextRuns` / `GroupIntoTextLines` — 底层的位置感知合并函数。
+
+提取管线支持对象流（PDF 1.5+）、预定义 CMap、/Differences 字形名、WinAnsi/MacRoman/PDFDoc 编码、传统 GBK/Big5/Shift-JIS/EUC 编码、/Widths 与 CID /W 字形宽度、TJ 字距空格、以及 PDF 2.0 的 UTF-16BE/UTF-8 文本字符串。
 
 ### ExtractedText
 
@@ -985,6 +1048,17 @@ type ExtractedText struct {
     Y        float64 // 垂直位置
     FontName string  // PDF 字体资源名称（如 "LiberationSerif-Regular"）
     FontSize float64 // 字号（磅）
+    Width    float64 // 估算步进宽度（由 MergeTextRuns 设定；未知时为 0）
+}
+```
+
+### TextLine
+
+```go
+type TextLine struct {
+    Y     float64    // 行基线（页面自上而下坐标）
+    Words []TextWord // 合并后的单词，从左到右
+    Text  string     // 带单词间距的整行文本
 }
 ```
 

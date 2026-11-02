@@ -99,3 +99,33 @@ func TestFormula_MeasureLayout(t *testing.T) {
 		t.Errorf("plain text width invalid")
 	}
 }
+
+// TestFormulaOptions verifies FormulaOption color and font family apply.
+func TestFormulaOptions(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	pdf.AddPage()
+	if err := pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pdf.SetFont("lib", "", 12); err != nil {
+		t.Fatal(err)
+	}
+	_, err := pdf.DrawFormula(50, 100, `a^2 + b^2 = c^2`, 12, &FormulaOption{
+		Color: &[3]uint8{200, 0, 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "fcolor.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	parser, _ := newRawPDFParser(data)
+	stream := parser.getPageContentStream(0)
+	// the red fill color operator must appear in the stream
+	if !strings.Contains(string(stream), "0.784 0.000 0.000") {
+		t.Errorf("formula color not applied; stream: %.400s", string(stream))
+	}
+}

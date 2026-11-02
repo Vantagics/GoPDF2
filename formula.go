@@ -383,6 +383,27 @@ func (gp *GoPdf) DrawFormula(x, y float64, latex string, fontSize float64, opt *
 
 	rise := fontSize * 0.3 // top padding
 	baseline := y + rise + m.ascent
+
+	// apply options
+	if opt.Color != nil {
+		gp.SetTextColor(opt.Color[0], opt.Color[1], opt.Color[2])
+		if rgb, ok := gp.curr.textColor().(cacheContentTextColorRGB); ok {
+			defer gp.SetTextColor(rgb.r, rgb.g, rgb.b)
+		}
+	}
+	if opt.FontFamily != "" {
+		style := Regular
+		if opt.Italic {
+			style = Italic
+		}
+		if err := gp.SetFontWithStyle(opt.FontFamily, style, fontSize); err != nil {
+			return 0, err
+		}
+	} else if opt.Italic {
+		// keep the current selection, add italic style
+		gp.curr.FontStyle |= Italic
+	}
+
 	err := gp.renderFormulaTokens(tokens, x, baseline, fontSize)
 	if err != nil {
 		return 0, err

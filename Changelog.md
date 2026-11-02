@@ -56,6 +56,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Raw parser is now the primary extraction backend (ledongthuc/pdf remains as
   fallback); ligature-aware ToUnicode maps (multi-rune bfchar destinations)
+- PDF 2.0 UTF-8 text strings (EF BB BF BOM) decode like UTF-16BE
+- `<script>`/`<style>` parse as raw text — markup inside scripts no longer
+  corrupts the element tree
+
+### Fixed (review hardening)
+- **Text rise leak**: `Ts` is always emitted — superscript rise previously
+  bled into all following text of a page (phantom-strikethrough artifacts)
+- **Inline `<a>` links** inside paragraphs were unstyled and produced no
+  clickable annotation; now styled and linked
+- **text-align: center/right** never applied its computed line start —
+  centered headings rendered left-aligned
+- **HTML table `RepeatTableHeaders`** was stored but never drawn; `<thead>`
+  rows now repeat on continuation pages
+- Default `<p>` spacing restored (paragraphs without CSS collapsed to a bare
+  line-height gap)
+- **Data race** in the cached CJK decoders (lazy map write) — immutable
+  Encodings are now shared and Decoders created per call; concurrent
+  extraction is race-detector clean
+- `hexBytes` mutated its input, which alias stream data — now copies
+- table segment borders use each segment's actual header height
+- a { text-decoration: none } is honored; `rgba()` colors parse;
+  `line-height` percentages parse; `*.class` selectors work
+- tokenizer no longer hangs on stray `)`/`>`; CMap bfrange 0xFFFF overflow
+
+### Performance (review rounds)
+- Object-header lookup replaced the `{digit} 0 obj` regexp that consumed 76%
+  of extraction CPU (byte-level scan with backward parsing) — arXiv paper
+  extraction 125ms -> 49ms
+- Zero-copy tokenizer and allocation-free number parsing — 55-page formula
+  booklet 205ms -> 82ms (2.5-2.6x overall)
+- `ExtractAllPagesLines` parses once for all-page line extraction;
+  `RenderAllPagesToImages` parses once for all-page rendering
+- CSS rules pre-bucketed by specificity; CJK decoder Encodings cached;
+  repeated `<img>` srcs memoized per render
 
 ## [1.0.0] - 2025-02-11
 

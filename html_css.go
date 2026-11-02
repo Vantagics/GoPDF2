@@ -194,6 +194,9 @@ func parseSimpleSelector(s string) (cssSelector, bool) {
 	if s == "" || s == "*" {
 		return cs, true
 	}
+	// universal selector may combine with classes/ids: *.cls == .cls
+	s = strings.TrimPrefix(s, "*")
+
 	for len(s) > 0 {
 		switch s[0] {
 		case '.':

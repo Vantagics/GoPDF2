@@ -163,24 +163,83 @@ func (gp *GoPdf) IsFitMultiCell(rectangle *Rect, text string) (bool, float64, er
 
 ```go
 func (gp *GoPdf) InsertHTMLBox(x, y, w, h float64, htmlStr string, opt HTMLBoxOption) (float64, error)
+func (gp *GoPdf) InsertHTMLPaginated(x, y, w float64, htmlStr string, opt HTMLBoxOption) (float64, error)
 ```
 
-Render HTML content into a rectangular area on the PDF page.
+Render HTML content into a rectangular area. `InsertHTMLBox` clips at the
+box height (legacy behavior); `InsertHTMLPaginated` flows content across
+pages automatically — when content would pass `opt.PageBottom` a new page is
+added and rendering resumes at `opt.PageTop`, with optional repeated table
+headers (`opt.RepeatTableHeaders`) and an `opt.OnPageBreak` callback.
 
 **Parameters:** `x, y` (top-left corner), `w, h` (box size), `htmlStr` (HTML string), `opt` (rendering options).
 
 **Returns:** the Y position after the last rendered content.
 
-**Supported tags:** `<b>`, `<strong>`, `<i>`, `<em>`, `<u>`, `<br>`, `<p>`, `<div>`, `<h1>`-`<h6>`, `<font>`, `<span>`, `<img>`, `<ul>`, `<ol>`, `<li>`, `<hr>`, `<center>`, `<a>`, `<blockquote>`, `<sub>`, `<sup>`
+**Supported tags:** `<b>`, `<strong>`, `<i>`, `<em>`, `<u>`, `<s>`/`<strike>`/`<del>` (real strikethrough), `<br>`, `<p>`, `<div>`, `<h1>`-`<h6>`, `<font>`, `<span>`, `<small>`, `<big>`, `<img>` (file paths and base64 data URIs), `<ul>`/`<ol>` with nesting, `start` and `type` (decimal/alpha/roman), `<hr>`, `<center>`, `<a>` (styled and clickable), `<blockquote>`, `<sub>`, `<sup>`, `<pre>`/`<code>`/`<tt>`, `<style>`, `<script>` (ignored), full `<table>` with `<thead>`/`<tbody>`/`<tfoot>`/`<tr>`/`<th>`/`<td>`/`<caption>`/`<colgroup>`/`<col>`, colspan/rowspan, per-cell alignment and background.
 
-**Supported inline CSS:** `color`, `font-size`, `font-family`, `font-weight`, `font-style`, `text-decoration`, `text-align`
+**CSS:** `<style>` blocks with tag / `.class` / `#id` selectors (specificity: id > class > tag), inline `style="..."` overrides.
 
-**Color formats:** `#RGB`, `#RRGGBB`, `rgb(r,g,b)`, CSS named colors
+**Supported CSS properties:** `color`, `background-color`, `font-size`, `font-family`, `font-weight`, `font-style`, `text-decoration`, `text-align` (including `justify`), `text-transform`, `text-indent`, `line-height`, `letter-spacing`, `vertical-align`, `width` (tables/cells/images), `margin-top`, `margin-bottom`, `white-space`
+
+**CJK line breaking:** CJK text wraps per character with kinsoku rules (no line-starting punctuation, no line-ending open brackets).
+
+**Color formats:** `#RGB`, `#RRGGBB`, `rgb(r,g,b)`, `rgba(r,g,b,a)` (alpha ignored), CSS named colors
 
 **Font size formats:** `12pt`, `16px`, `1.5em`, `150%`, named sizes (small, medium, large, etc.)
 
 ---
 
+## Table Layout
+
+```go
+func (gp *GoPdf) NewTableLayout(startX, startY, rowHeight float64, maxRows int) TableLayout
+```
+
+```go
+type TableLayout interface {
+    AddColumn(header string, width float64, align string)
+    AddRow(row []string)
+    AddStyledRow(row []RowCell)
+    SetTableStyle(style CellStyle)
+    SetHeaderStyle(style CellStyle)
+    SetCellStyle(style CellStyle)
+    DrawTable() error
+    SetAutoRowHeight(auto bool) // grow rows to fit wrapped content
+    SetPaginate(paginate bool)  // multi-page tables with repeated headers
+}
+```
+
+- `SetAutoRowHeight(true)` measures wrapped cell text and grows each row to fit (`rowHeight` becomes the minimum).
+- `SetPaginate(true)` starts a new page when a row would cross the bottom margin and redraws the header row on every continued page.
+- `NewRowCellSpan(content, style, colspan)` builds cells spanning multiple columns.
+
+---
+
+## Formula Rendering
+
+```go
+func (gp *GoPdf) DrawFormula(x, y float64, latex string, fontSize float64, opt *FormulaOption) (float64, error)
+func (gp *GoPdf) MeasureFormula(latex string, fontSize float64) (width float64, height float64, err error)
+```
+
+Render a formula using a practical LaTeX-lite subset:
+
+- superscripts and subscripts: `x^2`, `a_i`, `x^{n+1}`
+- fractions: `rac{a}{b}`
+- square roots with overline: `\sqrt{x}`
+- binomials with parentheses: `inom{n}{k}`
+- Greek letters: `lpha` ... `\Omega`
+- operators and symbols: `\sum`, `\int`, `\prod`, `	imes`, `\cdot`, `\pm`, `\leq`, `\geq`, `
+eq`, `pprox`, `\infty`, `ightarrow`, `\partial`, `
+abla`, and more
+- function names: `\sin`, `\cos`, `\log`, `\lim`, ...
+
+`FormulaOption` selects the font family, color, and italic style. The current
+font is used by default; a font with good Unicode math coverage (STIX, DejaVu,
+Liberation) is recommended.
+
+---
 ## Position
 
 ```go
@@ -968,6 +1027,10 @@ type TOCItem struct {
 func ExtractTextFromPage(pdfData []byte, pageIndex int) ([]ExtractedText, error)
 func ExtractTextFromAllPages(pdfData []byte) (map[int][]ExtractedText, error)
 func ExtractPageText(pdfData []byte, pageIndex int) (string, error)
+func ExtractPageLines(pdfData []byte, pageIndex int) ([]TextLine, error)
+func ExtractAllPagesLines(pdfData []byte) (map[int][]TextLine, error)
+func MergeTextRuns(runs []ExtractedText) []ExtractedText
+func GroupIntoTextLines(runs []ExtractedText) []TextLine
 ```
 
 Extract text content from existing PDF files. These are package-level functions (not methods on GoPdf).
@@ -975,6 +1038,11 @@ Extract text content from existing PDF files. These are package-level functions 
 - `ExtractTextFromPage` — extracts text items with position, font, and size from a single page (0-based index).
 - `ExtractTextFromAllPages` — extracts text from all pages, returning a map of page index to text items.
 - `ExtractPageText` — convenience wrapper that returns all text from a page as a single string.
+- `ExtractPageLines` — merges fragmentary runs into readable words and lines (recommended for real-world PDFs with per-glyph text operators).
+- `ExtractAllPagesLines` — parses the PDF once and returns merged lines for every page (prefer over looping `ExtractPageLines`).
+- `MergeTextRuns` / `GroupIntoTextLines` — the underlying position-aware merging helpers.
+
+The extraction pipeline supports object streams (PDF 1.5+), predefined CMaps, /Differences glyph names, WinAnsi/MacRoman/PDFDoc encodings, legacy GBK/Big5/Shift-JIS/EUC encodings, glyph advances from /Widths and CID /W arrays, TJ kerning spaces, and PDF 2.0 UTF-16BE/UTF-8 text strings.
 
 ### ExtractedText
 
@@ -985,6 +1053,17 @@ type ExtractedText struct {
     Y        float64 // Vertical position
     FontName string  // PDF font resource name (e.g. "LiberationSerif-Regular")
     FontSize float64 // Font size in points
+    Width    float64 // Estimated advance width (set by MergeTextRuns; 0 when unknown)
+}
+```
+
+### TextLine
+
+```go
+type TextLine struct {
+    Y     float64    // Baseline of the line (top-down page coordinates)
+    Words []TextWord // Merged words, left to right
+    Text  string     // The line text with spacing between words
 }
 ```
 

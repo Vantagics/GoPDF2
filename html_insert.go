@@ -3,6 +3,7 @@ package gopdf
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"image"
 	"strconv"
 	"strings"
@@ -213,6 +214,9 @@ func (gp *GoPdf) InsertHTMLPaginated(x, y, w float64, htmlStr string, opt HTMLBo
 	}
 	if opt.PageTop <= 0 {
 		opt.PageTop = y
+	}
+	if opt.PageBottom <= y {
+		return y, fmt.Errorf("InsertHTMLPaginated: PageBottom (%v) must be below the start y (%v)", opt.PageBottom, y)
 	}
 
 	nodes := parseHTML(htmlStr)

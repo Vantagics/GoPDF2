@@ -263,3 +263,27 @@ func TestParseHTMLEntitiesInAttrs(t *testing.T) {
 		t.Errorf("title entity decode: %q", nodes[0].Attrs["title"])
 	}
 }
+
+// TestParseSimpleSelectorStar verifies *.class combines with classes.
+func TestParseSimpleSelectorStar(t *testing.T) {
+	cs, ok := parseSimpleSelector("*.hl")
+	if !ok || cs.tag != "" || cs.class != "hl" {
+		t.Errorf("parseSimpleSelector(*.hl) = %+v (%v), want class=hl no tag", cs, ok)
+	}
+	// and it matches elements via class only
+	node := parseHTML(`<span class="hl">x</span>`)[0]
+	rules := parseStylesheet(`*.hl { color: red; } p { color: blue; }`)
+	res := &htmlStyleResolver{tagRules: nil}
+	for _, r := range rules {
+		switch r.selector.specificity() {
+		case 2:
+			res.classRules = append(res.classRules, r)
+		default:
+			res.tagRules = append(res.tagRules, r)
+		}
+	}
+	props := res.resolve(node)
+	if props["color"] != "red" {
+		t.Errorf("*.hl did not apply: %v", props)
+	}
+}
