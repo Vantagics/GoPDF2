@@ -7,4 +7,4 @@ require (
 	go.mozilla.org/pkcs7 v0.9.0
 )
 
-require golang.org/x/text v0.43.0 // indirect
+require golang.org/x/text v0.43.0

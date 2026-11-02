@@ -13,7 +13,7 @@ GoPDF2 是一个用 Go 编写的 PDF 生成库。基于 [gopdf](https://github.c
 
 - Unicode 子集字体嵌入（中文、日文、韩文等），自动子集化以最小化文件体积
 - **打开并修改已有 PDF** — 通过 `OpenPDF` 导入所有页面，在其上叠加新内容（文字、图片、HTML、绘图），然后保存
-- **HTML 转 PDF 渲染** — 通过 `InsertHTMLBox` 支持 `<b>`、`<i>`、`<u>`、`<p>`、`<h1>`–`<h6>`、`<font>`、`<span style>`、`<img>`、`<ul>`/`<ol>`、`<hr>`、`<center>`、`<a>`、`<blockquote>` 等标签
+- **HTML 转 PDF 渲染** — 通过 `InsertHTMLBox` 支持 `<b>`、`<i>`、`<u>`、`<s>`、`<p>`、`<h1>`–`<h6>`、`<font>`、`<span style>`、`<img>`（文件与 base64 Data URI）、`<ul>`/`<ol>`（嵌套、`start`/`type`）、`<hr>`、`<center>`、`<a>`、`<blockquote>`、`<pre>`/`<code>`、完整 `<table>`（colspan/rowspan、列宽、标题、单元格样式）、`<style>` 样式块（标签/类/ID 选择器）、中文避头尾换行、两端对齐等；多页流式排版使用 `InsertHTMLPaginated`
 - **水印** — 通过 `AddWatermarkText` / `AddWatermarkImage` 添加文字和图片水印，支持透明度、旋转、平铺
 - **PDF 注释** — 通过 `AddAnnotation` 添加便签、高亮、下划线、删除线、矩形、圆形、自由文本等注释
 - **页面操作** — 提取页面（`ExtractPages`）、合并 PDF（`MergePages`）、删除页面（`DeletePage` / `DeletePages`）、复制页面（`CopyPage`）、移动页面（`MovePage`）
@@ -37,7 +37,8 @@ GoPDF2 是一个用 Go 编写的 PDF 生成库。基于 [gopdf](https://github.c
 - **页面布局与页面模式** — 通过 `SetPageLayout` / `SetPageMode` 控制阅读器显示方式
 - **文档统计** — 通过 `GetDocumentStats` / `GetFonts` 查看文档结构信息
 - **目录/书签** — 通过 `GetTOC` / `SetTOC` 读写层级化的大纲书签树
-- **文本提取** — 通过 `ExtractTextFromPage` / `ExtractPageText` 从已有 PDF 中提取带位置信息的文本
+- **文本提取** — 通过 `ExtractTextFromPage` / `ExtractPageText` 从已有 PDF 中提取带位置信息的文本；`ExtractPageLines` / `GroupIntoTextLines` 按位置重建单词与行（支持逐字形 Tj 流、字距空格、连字、对象流 ObjStm、预定义 CMap 及 GBK/Big5/Shift-JIS/EUC 传统编码）
+- **公式渲染** — LaTeX 精简子集（上下标、分数、根号、二项式、希腊字母、常用算符），通过 `DrawFormula` / `MeasureFormula`
 - **图片提取** — 通过 `ExtractImagesFromPage` / `ExtractImagesFromAllPages` 从已有 PDF 中提取图片及元数据
 - **表单字段 (AcroForm)** — 通过 `AddFormField` / `AddTextField` / `AddCheckbox` / `AddDropdown` 添加交互式表单字段（文本、复选框、下拉框、单选、按钮、签名）
 - **数字签名** — 通过 `SignPDF` / `VerifySignature` 进行 PKCS#7 签名与验证

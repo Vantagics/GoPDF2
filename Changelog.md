@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Text extraction hangs** on malformed content streams: `tokenize` no longer
+  stalls on stray `)`/`>` delimiters (TAMReview.pdf, basicapi.pdf) and
+  `parseCMap` no longer overflows on 0xFFFF bfranges
+- **Pages invisible to the parser**: object streams (/ObjStm, PDF 1.5+) are
+  now expanded; `/Type/Page` vs `/Pages` token detection fixed
+- **Garbled text** for fonts without usable ToUnicode: /Differences glyph
+  names, WinAnsi/MacRoman/PDFDoc tables, predefined CMaps (UniGB/UniJIS/
+  UniKS-UCS2) and legacy CJK decoders (GBK/Big5/Shift-JIS/EUC via x/text)
+- **Text rise leak**: `Ts` is now always emitted; superscript rise no longer
+  bleeds into all following text of a page
+- Filter chains (FlateDecode+PNG predictors, ASCIIHex, ASCII85) applied
+  uniformly to content, CMap and object streams
+
+### Added
+- **Position-aware text extraction**: glyph advances from /Widths, /W (incl.
+  compact CID form) drive exact run positions; `MergeTextRuns`,
+  `GroupIntoTextLines` and `ExtractPageLines` reconstruct words/lines with
+  correct spacing from per-glyph Tj streams; TJ negative-kern spaces honored
+- **html2pdf overhaul**:
+  - CSS engine: `<style>` blocks, tag/`.class`/`#id` selectors, specificity
+    cascade, inline-style override
+  - fragment-based line layout: CJK per-character wrapping with kinsoku
+    (no line-start punctuation / line-end openers), `text-align: justify`,
+    `line-height`, `letter-spacing`, `text-indent`, `text-transform`,
+    `white-space: pre`
+  - real strikethrough (`<s>`/`<del>`), underline and background highlight
+    per fragment
+  - rich tables: colspan/rowspan, `<colgroup>`/`<col>`/cell widths, per-cell
+    alignment, `<caption>`, background/border attributes and CSS
+  - `InsertHTMLPaginated`: multi-page flow with page-top/bottom control,
+    table row pagination, `OnPageBreak` callback
+  - nested lists with `start=`/`type=` (decimal, alpha, roman), `<pre>`/
+    `<code>`, extended named + numeric HTML entities, base64 data-URI images
+  - spaces are drawn as real glyphs so generated PDFs round-trip losslessly
+- **Table layout**: `SetAutoRowHeight` (content-measured wrapped rows),
+  `SetPaginate` (multi-page tables with repeated headers and per-page
+  segment borders), colspan cells via `NewRowCellSpan`
+- **Formula rendering** (`DrawFormula`/`MeasureFormula`): LaTeX-lite subset —
+  sub/superscripts, `\frac`, `\sqrt`, `\binom`, Greek letters, common
+  operators and function names
+- Corpus-based extraction test suite (test/corpus, auto-skipped when absent)
+  covering ISO 32000-2 samples, an arXiv paper, a 55-page formula booklet,
+  GBK Chinese, Arabic CID fonts and ObjStm-based forms
+- `cmd/pdfprobe` and `cmd/pdfrender` diagnostic tools, `cmd/htmldemo` showcase
+
+### Changed
+- Raw parser is now the primary extraction backend (ledongthuc/pdf remains as
+  fallback); ligature-aware ToUnicode maps (multi-rune bfchar destinations)
+
 ## [1.0.0] - 2025-02-11
 
 ### Features

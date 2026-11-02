@@ -13,7 +13,7 @@ Requires Go 1.13+.
 
 - Unicode subfont embedding (Chinese, Japanese, Korean, etc.) with automatic subsetting to minimize file size
 - **Open and modify existing PDFs** via `OpenPDF` — import all pages, overlay new content (text, images, HTML, drawings), and save
-- **HTML-to-PDF rendering** via `InsertHTMLBox` — supports `<b>`, `<i>`, `<u>`, `<p>`, `<h1>`–`<h6>`, `<font>`, `<span style>`, `<img>`, `<ul>`/`<ol>`, `<hr>`, `<center>`, `<a>`, `<blockquote>`, and more
+- **HTML-to-PDF rendering** via `InsertHTMLBox` — supports `<b>`, `<i>`, `<u>`, `<s>`, `<p>`, `<h1>`–`<h6>`, `<font>`, `<span style>`, `<img>` (files and base64 data URIs), `<ul>`/`<ol>` (nested, `start`/`type`), `<hr>`, `<center>`, `<a>`, `<blockquote>`, `<pre>`/`<code>`, full `<table>` (colspan/rowspan, column widths, caption, per-cell styling), `<style>` blocks with tag/class/id selectors, CJK-aware line breaking with kinsoku rules, justified text, and more; multi-page flow via `InsertHTMLPaginated`
 - **Watermark** — text and image watermarks with opacity, rotation, and tiling via `AddWatermarkText` / `AddWatermarkImage`
 - **PDF annotations** — sticky notes, highlights, underlines, strikeouts, squares, circles, and free text via `AddAnnotation`
 - **Page manipulation** — extract pages (`ExtractPages`), merge PDFs (`MergePages`), delete pages (`DeletePage` / `DeletePages`), copy pages (`CopyPage`), move pages (`MovePage`)
@@ -37,7 +37,8 @@ Requires Go 1.13+.
 - **Page layout & page mode** — control viewer display via `SetPageLayout` / `SetPageMode`
 - **Document statistics** — inspect document structure via `GetDocumentStats` / `GetFonts`
 - **TOC / Bookmarks** — read and write hierarchical outline trees via `GetTOC` / `SetTOC`
-- **Text extraction** — extract text with positions from existing PDFs via `ExtractTextFromPage` / `ExtractPageText`
+- **Text extraction** — extract text with positions from existing PDFs via `ExtractTextFromPage` / `ExtractPageText`; position-aware line reconstruction via `ExtractPageLines` / `GroupIntoTextLines` (per-glyph Tj streams, kerned spaces, ligatures, ObjStm PDFs, predefined CMaps and legacy GBK/Big5/Shift-JIS/EUC encodings)
+- **Formula rendering** — LaTeX-lite subset (sub/superscripts, fractions, square roots, binomials, Greek letters, operators) via `DrawFormula` / `MeasureFormula`
 - **Image extraction** — extract images with metadata from existing PDFs via `ExtractImagesFromPage` / `ExtractImagesFromAllPages`
 - **Form fields (AcroForm)** — add interactive form fields (text, checkbox, dropdown, radio, button, signature) via `AddFormField` / `AddTextField` / `AddCheckbox` / `AddDropdown`
 - **Digital signatures** — sign PDFs with PKCS#7 and verify signatures via `SignPDF` / `VerifySignature`
