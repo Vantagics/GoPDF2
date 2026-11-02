@@ -2,6 +2,7 @@ package gopdf
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -12,11 +13,59 @@ import (
 const testPDFSample = "test.pdf"
 const testFontLiberation = "test/res/LiberationSerif-Regular.ttf"
 
+// TestMain generates a stand-in test.pdf when the developer's local sample is
+// absent, so the comprehensive suite is self-contained in clean checkouts/CI.
+func TestMain(m *testing.M) {
+	if _, err := os.Stat(testPDFSample); os.IsNotExist(err) {
+		if genErr := generateSampleTestPDF(testPDFSample); genErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not generate %s: %v\n", testPDFSample, genErr)
+		}
+	}
+	os.Exit(m.Run())
+}
+
+// generateSampleTestPDF creates a 3-page sample PDF used by the comprehensive tests.
+func generateSampleTestPDF(path string) error {
+	pdf := GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	font := testFontLiberation
+	if _, err := os.Stat(font); err == nil {
+		if err := pdf.AddTTFFont("lib", font); err == nil {
+			pdf.SetFont("lib", "", 12)
+		}
+	}
+	paragraph := "This sample page contains a substantial amount of text so that text " +
+		"extraction tests have enough content to analyze. It includes paragraphs, " +
+		"numbers such as 12345.6789, punctuation, and multiple sentences. " +
+		"The quick brown fox jumps over the lazy dog while researchers study " +
+		"document structure, fonts, tables, and embedded metadata in PDF files. "
+	for i := 1; i <= 3; i++ {
+		pdf.AddPage()
+		pdf.SetXY(50, 50)
+		_ = pdf.Cell(nil, fmt.Sprintf("Sample academic paper page %d", i))
+		y := 80.0
+		for line := 0; line < 14; line++ {
+			pdf.SetXY(50, y)
+			_ = pdf.Cell(nil, paragraph)
+			y += 18
+			if y > 760 {
+				break
+			}
+		}
+		pdf.SetXY(50, y+10)
+		_ = pdf.Cell(nil, "0123456789 Abstract conclusion references")
+	}
+	return pdf.WritePdf(path)
+}
+
 // loadTestPDF reads the test.pdf sample file.
 func loadTestPDF(t *testing.T) []byte {
 	t.Helper()
 	data, err := os.ReadFile(testPDFSample)
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("sample %s not available in this checkout", testPDFSample)
+		}
 		t.Fatalf("cannot read %s: %v", testPDFSample, err)
 	}
 	return data
