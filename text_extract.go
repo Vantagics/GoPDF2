@@ -1107,23 +1107,21 @@ func hexToBytes(hex string) []byte {
 }
 
 // hexBytes converts a hex byte slice (whitespace removed) to bytes.
+// The input is copied, never mutated — callers pass views into the stream.
 func hexBytes(hex []byte) []byte {
-	// strip whitespace in place
-	w := 0
-	for r := 0; r < len(hex); r++ {
-		if !isPDFSpace(hex[r]) {
-			hex[w] = hex[r]
-			w++
+	clean := make([]byte, 0, len(hex)+1)
+	for _, c := range hex {
+		if !isPDFSpace(c) {
+			clean = append(clean, c)
 		}
 	}
-	hex = hex[:w]
-	if len(hex)%2 == 1 {
-		hex = append(hex, '0')
+	if len(clean)%2 == 1 {
+		clean = append(clean, '0')
 	}
-	out := make([]byte, len(hex)/2)
-	for i := 0; i+1 < len(hex); i += 2 {
-		hi := hexVal(hex[i])
-		lo := hexVal(hex[i+1])
+	out := make([]byte, len(clean)/2)
+	for i := 0; i+1 < len(clean); i += 2 {
+		hi := hexVal(clean[i])
+		lo := hexVal(clean[i+1])
 		out[i/2] = byte(hi<<4 | lo)
 	}
 	return out

@@ -528,7 +528,8 @@ func (t *tableLayout) drawCell(
 
 	// Set the text color and font
 	t.pdf.SetTextColor(style.TextColor.R, style.TextColor.G, style.TextColor.B)
-	if style.Font != "" {
+	// A zero font size would render invisible text — keep the current size.
+	if style.Font != "" && style.FontSize > 0 {
 		t.pdf.SetFont(style.Font, "", style.FontSize)
 	}
 

@@ -69,49 +69,24 @@ func predefinedCMapFamily(name string) int {
 	}
 }
 
-// decodeCJKBytes decodes raw bytes with the legacy encoding matching the family.
-// Decoders are cached — x/text decoder creation allocates and these fire
-// per string token during extraction.
-var cjkDecoders = map[int]*cachedDecoder{}
-
-type cachedDecoder struct {
-	decode func([]byte) ([]byte, error)
-}
-
-func decoderForFamily(family int) *cachedDecoder {
-	if d, ok := cjkDecoders[family]; ok {
-		return d
-	}
-	var enc interface {
-		NewDecoder() *xencoding.Decoder
-	}
-	switch family {
-	case cmapFamilyGBK:
-		enc = simplifiedchinese.GBK
-	case cmapFamilyBig5:
-		enc = traditionalchinese.Big5
-	case cmapFamilyEUCKR:
-		enc = korean.EUCKR
-	case cmapFamilySJIS:
-		enc = japanese.ShiftJIS
-	case cmapFamilyEUCJP:
-		enc = japanese.EUCJP
-	default:
-		return nil
-	}
-	dec := enc.NewDecoder()
-	d := &cachedDecoder{decode: dec.Bytes}
-	cjkDecoders[family] = d
-	return d
+// cjkEncodings caches the immutable x/text encodings per family. The Encoding
+// values are safe for concurrent use; a fresh Decoder (cheap, stateful) is
+// created per call, so extraction is safe from multiple goroutines.
+var cjkEncodings = map[int]xencoding.Encoding{
+	cmapFamilyGBK:   simplifiedchinese.GBK,
+	cmapFamilyBig5:  traditionalchinese.Big5,
+	cmapFamilyEUCKR: korean.EUCKR,
+	cmapFamilySJIS:  japanese.ShiftJIS,
+	cmapFamilyEUCJP: japanese.EUCJP,
 }
 
 // decodeCJKBytes decodes raw bytes with the legacy encoding matching the family.
 func decodeCJKBytes(family int, data []byte) string {
-	d := decoderForFamily(family)
-	if d == nil {
+	enc, ok := cjkEncodings[family]
+	if !ok {
 		return string(data)
 	}
-	out, err := d.decode(data)
+	out, err := enc.NewDecoder().Bytes(data)
 	if err != nil {
 		return string(data)
 	}

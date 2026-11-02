@@ -61,7 +61,7 @@ func ExtractImagesFromAllPages(pdfData []byte) (map[int][]ExtractedImage, error)
 
 // imagePlacement records where an XObject image is placed on a page.
 type imagePlacement struct {
-	name string  // e.g. "/Im1"
+	name       string  // e.g. "/Im1"
 	a, b, c, d float64 // CTM components
 	e, f       float64 // CTM translation
 }
@@ -75,9 +75,12 @@ func parseImagePlacements(stream []byte) []imagePlacement {
 	tokens := tokenize(stream)
 	var placements []imagePlacement
 
-	// Track CTM via cm operators (simplified: last cm wins)
+	// Track the CTM with proper semantics: cm concatenates with the current
+	// matrix (spec 8.3.2), q/Q save and restore it.
 	ctmA, ctmB, ctmC, ctmD := 1.0, 0.0, 0.0, 1.0
 	ctmE, ctmF := 0.0, 0.0
+	type gsState struct{ a, b, c, d, e, f float64 }
+	var gsStack []gsState
 
 	stack := make([]float64, 0, 16)
 	for i := 0; i < len(tokens); i++ {
@@ -89,30 +92,39 @@ func parseImagePlacements(stream []byte) []imagePlacement {
 		switch tok {
 		case "cm":
 			if len(stack) >= 6 {
-				ctmA = stack[len(stack)-6]
-				ctmB = stack[len(stack)-5]
-				ctmC = stack[len(stack)-4]
-				ctmD = stack[len(stack)-3]
-				ctmE = stack[len(stack)-2]
-				ctmF = stack[len(stack)-1]
+				ma, mb := stack[len(stack)-6], stack[len(stack)-5]
+				mc, md := stack[len(stack)-4], stack[len(stack)-3]
+				me, mf := stack[len(stack)-2], stack[len(stack)-1]
 				stack = stack[:len(stack)-6]
+				// newCTM = cm x CTM
+				na := ma*ctmA + mb*ctmC
+				nb := ma*ctmB + mb*ctmD
+				nc := mc*ctmA + md*ctmC
+				nd := mc*ctmB + md*ctmD
+				ne := me*ctmA + mf*ctmC + ctmE
+				nf := me*ctmB + mf*ctmD + ctmF
+				ctmA, ctmB, ctmC, ctmD = na, nb, nc, nd
+				ctmE, ctmF = ne, nf
 			}
 		case "Do":
 			// The name is the previous token
 			if i >= 1 && strings.HasPrefix(tokens[i-1], "/") {
 				placements = append(placements, imagePlacement{
 					name: tokens[i-1],
-					a: ctmA, b: ctmB, c: ctmC, d: ctmD,
+					a:    ctmA, b: ctmB, c: ctmC, d: ctmD,
 					e: ctmE, f: ctmF,
 				})
 			}
 			stack = stack[:0]
 		case "q":
-			// save graphics state — simplified, just reset stack
+			gsStack = append(gsStack, gsState{ctmA, ctmB, ctmC, ctmD, ctmE, ctmF})
 		case "Q":
-			// restore graphics state — simplified
-			ctmA, ctmB, ctmC, ctmD = 1, 0, 0, 1
-			ctmE, ctmF = 0, 0
+			if n := len(gsStack); n > 0 {
+				s := gsStack[n-1]
+				gsStack = gsStack[:n-1]
+				ctmA, ctmB, ctmC, ctmD = s.a, s.b, s.c, s.d
+				ctmE, ctmF = s.e, s.f
+			}
 		default:
 			// non-numeric, non-operator — could be a name
 			if !strings.HasPrefix(tok, "/") {

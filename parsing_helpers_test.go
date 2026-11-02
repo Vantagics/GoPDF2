@@ -189,3 +189,27 @@ func TestParseCMapSurrogates(t *testing.T) {
 		t.Errorf("range destinations wrong: %v %v %v", m[0x0010], m[0x0011], m[0x0012])
 	}
 }
+
+// TestParseCSSColorRGBA covers rgb/rgba parsing.
+func TestParseCSSColorRGBA(t *testing.T) {
+	cases := []struct {
+		in      string
+		r, g, b uint8
+		ok      bool
+	}{
+		{"rgb(1, 2, 3)", 1, 2, 3, true},
+		{"rgba(10, 20, 30, 0.5)", 10, 20, 30, true},
+		{"#FF8000", 255, 128, 0, true},
+		{"#F80", 255, 136, 0, true},
+		{"red", 255, 0, 0, true},
+		{"rgb(1, 2)", 0, 0, 0, false},
+		{"rgb(a, b, c)", 0, 0, 0, false},
+	}
+	for _, c := range cases {
+		r, g, b, ok := parseCSSColor(c.in)
+		if ok != c.ok || (ok && (r != c.r || g != c.g || b != c.b)) {
+			t.Errorf("parseCSSColor(%q) = (%d,%d,%d,%v), want (%d,%d,%d,%v)",
+				c.in, r, g, b, ok, c.r, c.g, c.b, c.ok)
+		}
+	}
+}

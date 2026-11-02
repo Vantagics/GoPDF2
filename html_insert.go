@@ -703,6 +703,9 @@ func (r *htmlRenderer) renderBlockquote(node *htmlNode, state, parentState htmlR
 		r.cursorY += r.lineHeightOf(parentState)
 	}
 	indent := parentState.fontSize * 1.5
+	if indent > r.boxW*0.8 {
+		indent = r.boxW * 0.8 // degenerate narrow box: keep some content width
+	}
 	oldBoxX, oldBoxW := r.boxX, r.boxW
 	r.boxX += indent
 	r.boxW -= indent

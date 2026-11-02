@@ -43,51 +43,15 @@ func (o *RenderOption) defaults() {
 //	png.Encode(f, img)
 func RenderPageToImage(pdfData []byte, pageIndex int, opt RenderOption) (image.Image, error) {
 	opt.defaults()
-
 	parser, err := newRawPDFParser(pdfData)
 	if err != nil {
 		return nil, fmt.Errorf("parse PDF: %w", err)
 	}
-	if pageIndex < 0 || pageIndex >= len(parser.pages) {
-		return nil, fmt.Errorf("page index %d out of range (0..%d)", pageIndex, len(parser.pages)-1)
-	}
-
-	page := parser.pages[pageIndex]
-	mediaBox := page.mediaBox
-	pageW := mediaBox[2] - mediaBox[0]
-	pageH := mediaBox[3] - mediaBox[1]
-
-	scale := opt.DPI / 72.0
-	imgW := int(math.Ceil(pageW * scale))
-	imgH := int(math.Ceil(pageH * scale))
-
-	if imgW < 1 {
-		imgW = 1
-	}
-	if imgH < 1 {
-		imgH = 1
-	}
-
-	img := image.NewRGBA(image.Rect(0, 0, imgW, imgH))
-
-	// Fill background
-	bg := img.Bounds()
-	for y := bg.Min.Y; y < bg.Max.Y; y++ {
-		for x := bg.Min.X; x < bg.Max.X; x++ {
-			img.Set(x, y, opt.Background)
-		}
-	}
-
-	// Parse and render content stream
-	stream := parser.getPageContentStream(pageIndex)
-	if len(stream) > 0 {
-		renderContentStream(img, stream, parser, page, scale, pageH)
-	}
-
-	return img, nil
+	return renderParsedPage(parser, pageIndex, opt)
 }
 
-// RenderAllPagesToImages renders all pages to images.
+// RenderAllPagesToImages renders all pages to images. The PDF is parsed
+// once (RenderPageToImage re-parses per page, so prefer this for loops).
 func RenderAllPagesToImages(pdfData []byte, opt RenderOption) ([]image.Image, error) {
 	opt.defaults()
 	parser, err := newRawPDFParser(pdfData)
@@ -97,13 +61,62 @@ func RenderAllPagesToImages(pdfData []byte, opt RenderOption) ([]image.Image, er
 
 	images := make([]image.Image, len(parser.pages))
 	for i := range parser.pages {
-		img, err := RenderPageToImage(pdfData, i, opt)
+		img, err := renderParsedPage(parser, i, opt)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: %w", i, err)
 		}
 		images[i] = img
 	}
 	return images, nil
+}
+
+// renderParsedPage renders one page of an already-parsed document.
+func renderParsedPage(parser *rawPDFParser, pageIndex int, opt RenderOption) (image.Image, error) {
+	if pageIndex < 0 || pageIndex >= len(parser.pages) {
+		return nil, fmt.Errorf("page index %d out of range (0..%d)", pageIndex, len(parser.pages)-1)
+	}
+	page := parser.pages[pageIndex]
+	mediaBox := page.mediaBox
+	pageW := mediaBox[2] - mediaBox[0]
+	pageH := mediaBox[3] - mediaBox[1]
+
+	scale := opt.DPI / 72.0
+	imgW := int(math.Ceil(pageW * scale))
+	imgH := int(math.Ceil(pageH * scale))
+	if imgW < 1 {
+		imgW = 1
+	}
+	if imgH < 1 {
+		imgH = 1
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, imgW, imgH))
+	bg := img.Bounds()
+	for y := bg.Min.Y; y < bg.Max.Y; y++ {
+		for x := bg.Min.X; x < bg.Max.X; x++ {
+			img.Set(x, y, opt.Background)
+		}
+	}
+
+	stream := parser.getPageContentStream(pageIndex)
+	if len(stream) > 0 {
+		renderContentStream(img, stream, parser, page, scale, pageH)
+	}
+	return img, nil
+}
+
+func min2(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max2(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // renderContentStream interprets a PDF content stream and draws onto the image.
@@ -129,22 +142,40 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 		switch tok {
 		case "cm":
 			if len(stack) >= 6 {
-				ctmA = stack[len(stack)-6]
-				ctmD = stack[len(stack)-3]
-				ctmE = stack[len(stack)-2]
-				ctmF = stack[len(stack)-1]
+				ma := stack[len(stack)-6]
+				md := stack[len(stack)-3]
+				me := stack[len(stack)-2]
+				mf := stack[len(stack)-1]
 				stack = stack[:len(stack)-6]
+				// compose: new = cm x CTM (b, c components unused here)
+				ctmE = me*ctmA + mf*0 + ctmE
+				ctmF = me*0 + mf*ctmD + ctmF
+				ctmA *= ma
+				ctmD *= md
 			}
 
 		case "re":
-			// Rectangle: x y w h re
+			// Rectangle: x y w h re — transformed through the CTM, painted
+			// according to the following op (f fills, S strokes)
 			if len(stack) >= 4 {
 				rx := stack[len(stack)-4]
 				ry := stack[len(stack)-3]
 				rw := stack[len(stack)-2]
 				rh := stack[len(stack)-1]
 				stack = stack[:len(stack)-4]
-				drawRectOnImage(img, rx, pageH-ry-rh, rw, rh, scale, strokeColor)
+				x1 := ctmA*rx + ctmE
+				y1 := ctmD*ry + ctmF
+				x2 := ctmA*(rx+rw) + ctmE
+				y2 := ctmD*(ry+rh) + ctmF
+				dx := min2(x1, x2) * scale
+				dy := (pageH - max2(y1, y2)) * scale
+				dw := math.Abs(x2-x1) * scale
+				dh := math.Abs(y2-y1) * scale
+				col := strokeColor
+				if i+1 < len(tokens) && (tokens[i+1] == "f" || tokens[i+1] == "f*" || tokens[i+1] == "B") {
+					col = fillColor
+				}
+				drawRectOnImage(img, dx, dy, dw, dh, 1.0, col)
 			}
 
 		case "m":
