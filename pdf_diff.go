@@ -312,11 +312,11 @@ func compareTextContent(result *PDFDiffResult, data1, data2 []byte,
 				if math.Abs(items1[j].X-items2[j].X) > tolerance ||
 					math.Abs(items1[j].Y-items2[j].Y) > tolerance {
 					result.Differences = append(result.Differences, PDFDifference{
-						Type:      DiffTextMoved,
-						PageIndex: pageIdx,
+						Type:        DiffTextMoved,
+						PageIndex:   pageIdx,
 						Description: fmt.Sprintf("Text '%s' moved", truncateText(text, 30)),
-						Detail1:   fmt.Sprintf("(%.0f, %.0f)", items1[j].X, items1[j].Y),
-						Detail2:   fmt.Sprintf("(%.0f, %.0f)", items2[j].X, items2[j].Y),
+						Detail1:     fmt.Sprintf("(%.0f, %.0f)", items1[j].X, items1[j].Y),
+						Detail2:     fmt.Sprintf("(%.0f, %.0f)", items2[j].X, items2[j].Y),
 					})
 				}
 			}
@@ -335,7 +335,13 @@ func extractTextsWithParser(parser *rawPDFParser, data []byte, pageIdx int) []Ex
 	}
 	page := parser.pages[pageIdx]
 	fonts := buildFontMap(parser, page)
-	return parseTextOperators(stream, fonts, page.mediaBox)
+	return parseTextOperatorsCtx(&extractionContext{
+		parser:   parser,
+		fonts:    fonts,
+		xobjs:    page.resources.xobjs,
+		mediaBox: page.mediaBox,
+		visited:  map[int]bool{},
+	}, stream)
 }
 
 // joinExtractedTexts concatenates extracted text items into a single string.

@@ -62,10 +62,10 @@ type TextWord struct {
 
 // textExtractionJSON is the JSON output structure.
 type textExtractionJSON struct {
-	PageIndex int              `json:"page_index"`
-	Width     float64          `json:"width"`
-	Height    float64          `json:"height"`
-	Blocks    []textBlockJSON  `json:"blocks"`
+	PageIndex int             `json:"page_index"`
+	Width     float64         `json:"width"`
+	Height    float64         `json:"height"`
+	Blocks    []textBlockJSON `json:"blocks"`
 }
 
 type textBlockJSON struct {
@@ -147,7 +147,13 @@ func extractTextFromPageWithParser(parser *rawPDFParser, pdfData []byte, pageInd
 
 	page := parser.pages[pageIndex]
 	fonts := buildFontMap(parser, page)
-	return parseTextOperators(stream, fonts, page.mediaBox), nil
+	return parseTextOperatorsCtx(&extractionContext{
+		parser:   parser,
+		fonts:    fonts,
+		xobjs:    page.resources.xobjs,
+		mediaBox: page.mediaBox,
+		visited:  map[int]bool{},
+	}, stream), nil
 }
 
 // formatAsText converts extracted text items to a plain text string.

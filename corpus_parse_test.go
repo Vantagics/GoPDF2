@@ -245,3 +245,41 @@ func TestCorpus_MergeTextRunsUnit(t *testing.T) {
 		t.Errorf("line 1 = %q, want 'line2'", lines[1].Text)
 	}
 }
+
+// TestCorpus_TAMReviewForms checks Form XObject text extraction — TAMReview's
+// pages 2+ carry their content inside /Subtype /Form XObjects.
+func TestCorpus_TAMReviewForms(t *testing.T) {
+	data := corpusData(t, "TAMReview.pdf")
+	pages, err := ExtractTextFromAllPages(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) < 20 {
+		t.Errorf("expected ~23 pages (rounded via page %d), got %d", len(pages), len(pages))
+	}
+	total := 0
+	for _, runs := range pages {
+		for _, tx := range runs {
+			total += len(tx.Text)
+		}
+	}
+	if total < 10000 {
+		t.Errorf("form text missing: extracted %d chars, want >= 10000", total)
+	}
+	// the running header lives inside a Form XObject
+	lines, err := ExtractPageLines(data, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ln := range lines {
+		if strings.Contains(ln.Text, "OverviewoftheTechnology") ||
+			strings.Contains(strings.ReplaceAll(ln.Text, " ", ""), "TechnologyAcceptanceModel") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("form XObject header text not extracted")
+	}
+}

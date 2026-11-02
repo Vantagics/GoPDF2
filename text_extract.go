@@ -68,7 +68,13 @@ func extractTextRawPage(pdfData []byte, pageIndex int) ([]ExtractedText, error) 
 	}
 	page := parser.pages[pageIndex]
 	fonts := buildFontMap(parser, page)
-	return parseTextOperators(stream, fonts, page.mediaBox), nil
+	return parseTextOperatorsCtx(&extractionContext{
+		parser:   parser,
+		fonts:    fonts,
+		xobjs:    page.resources.xobjs,
+		mediaBox: page.mediaBox,
+		visited:  map[int]bool{},
+	}, stream), nil
 }
 
 // ExtractTextFromAllPages extracts text from all pages.
@@ -85,7 +91,13 @@ func ExtractTextFromAllPages(pdfData []byte) (map[int][]ExtractedText, error) {
 			}
 			page := parser.pages[i]
 			fonts := buildFontMap(parser, page)
-			texts := parseTextOperators(stream, fonts, page.mediaBox)
+			texts := parseTextOperatorsCtx(&extractionContext{
+				parser:   parser,
+				fonts:    fonts,
+				xobjs:    page.resources.xobjs,
+				mediaBox: page.mediaBox,
+				visited:  map[int]bool{},
+			}, stream)
 			if len(texts) > 0 {
 				result[i] = texts
 				any = true
@@ -680,7 +692,69 @@ func tjWidth(arr [][]byte, fi *fontInfo, fontSize float64) float64 {
 }
 
 // parseTextOperators parses PDF content stream text operators.
+// extractionContext carries what parseTextOperators needs beyond a single
+// stream: the parser (to resolve Form XObjects), page resources, media box,
+// recursion depth and visited-object tracking (anti-loop).
+type extractionContext struct {
+	parser   *rawPDFParser
+	fonts    map[string]*fontInfo
+	xobjs    map[string]int // resource name -> object number
+	mediaBox [4]float64
+	offX     float64 // Do translation offset already applied within this ctx
+	offY     float64
+	depth    int
+	visited  map[int]bool
+}
+
+const maxFormDepth = 4
+
+// isFormXObject reports whether an object dict describes a Form XObject.
+func isFormXObject(dict string) bool {
+	return strings.Contains(dict, "/Subtype /Form") || strings.Contains(dict, "/Subtype/Form")
+}
+
+// buildFontMapFromDict builds the font map for resources referenced by an
+// arbitrary dict (e.g. a Form XObject), mirroring the page-level logic.
+func buildFontMapFromDict(parser *rawPDFParser, dict string) map[string]*fontInfo {
+	res := rawPDFResources{
+		fonts: make(map[string]int),
+		xobjs: make(map[string]int),
+	}
+	resDict := dict
+	if resRef := extractRef(dict, "/Resources"); resRef > 0 {
+		if obj, ok := parser.objects[resRef]; ok {
+			resDict = obj.dict
+		}
+	}
+	parser.extractNamedRefs(resDict, "/Font", res.fonts)
+	return buildFontMap(parser, rawPDFPage{resources: res})
+}
+
+// buildXObjMapFromDict builds the XObject name map for a dict's resources.
+func buildXObjMapFromDict(parser *rawPDFParser, dict string) map[string]int {
+	res := make(map[string]int)
+	resDict := dict
+	if resRef := extractRef(dict, "/Resources"); resRef > 0 {
+		if obj, ok := parser.objects[resRef]; ok {
+			resDict = obj.dict
+		}
+	}
+	parser.extractNamedRefs(resDict, "/XObject", res)
+	return res
+}
+
+// parseTextOperators parses a standalone stream (kept for callers that have
+// no parser context).
 func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]float64) []ExtractedText {
+	return parseTextOperatorsCtx(&extractionContext{
+		fonts:    fonts,
+		mediaBox: mediaBox,
+		visited:  map[int]bool{},
+	}, stream)
+}
+
+// parseTextOperatorsCtx parses text operators, descending into Form XObjects.
+func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedText {
 	tokens := tokenizeBytes(stream)
 	// Pre-allocate with estimated capacity based on stream size.
 	results := make([]ExtractedText, 0, len(stream)/100+16)
@@ -699,7 +773,7 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 		ctmE, ctmF float64
 		tl         float64 // text leading
 	)
-	pageHeight := mediaBox[3] - mediaBox[1]
+	pageHeight := ctx.mediaBox[3] - ctx.mediaBox[1]
 
 	stack := make([]float64, 0, 64)
 	var scratch [8]float64 // reused by popN — operator arity is at most 6 (Tm/cm)
@@ -740,7 +814,7 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 			// We need to look back in the original tokens
 			if i >= 2 {
 				if bytes.HasPrefix(tokens[i-2], []byte("/")) {
-					if f, ok := fonts[string(tokens[i-2])]; ok {
+					if f, ok := ctx.fonts[string(tokens[i-2])]; ok {
 						curFont = f
 					}
 				}
@@ -793,8 +867,8 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 				raw := findStringBefore(tokens, i)
 				text := decodeTextString(string(raw), curFont)
 				if text != "" {
-					x := ctmA*tmX + ctmE
-					y := pageHeight - (ctmD*tmY + ctmF)
+					x := ctx.offX + ctmA*tmX + ctmE
+					y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
 					results = append(results, ExtractedText{
 						Text:     text,
 						X:        x,
@@ -834,8 +908,8 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 			}
 			text := combined.String()
 			if text != "" {
-				x := ctmA*tmX + ctmE
-				y := pageHeight - (ctmD*tmY + ctmF)
+				x := ctx.offX + ctmA*tmX + ctmE
+				y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
 				results = append(results, ExtractedText{
 					Text:     text,
 					X:        x,
@@ -857,8 +931,8 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 				raw := findStringBefore(tokens, i)
 				text := decodeTextString(string(raw), curFont)
 				if text != "" {
-					x := ctmA*tmX + ctmE
-					y := pageHeight - (ctmD*tmY + ctmF)
+					x := ctx.offX + ctmA*tmX + ctmE
+					y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
 					results = append(results, ExtractedText{
 						Text: text, X: x, Y: y,
 						FontName: fontDisplayName(curFont), FontSize: fontSize,
@@ -879,8 +953,8 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 				raw := findStringBefore(tokens, i)
 				text := decodeTextString(string(raw), curFont)
 				if text != "" {
-					x := ctmA*tmX + ctmE
-					y := pageHeight - (ctmD*tmY + ctmF)
+					x := ctx.offX + ctmA*tmX + ctmE
+					y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
 					results = append(results, ExtractedText{
 						Text: text, X: x, Y: y,
 						FontName: fontDisplayName(curFont), FontSize: fontSize,
@@ -895,6 +969,41 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 			ctmD = args[3]
 			ctmE = args[4]
 			ctmF = args[5]
+		case "Do":
+			// Form XObjects may carry more text (stamps, letterheads,
+			// figure annotations). Recurse into /Subtype /Form streams with
+			// the Do translation applied and the form's own fonts.
+			if ctx.parser == nil || ctx.depth >= maxFormDepth {
+				continue
+			}
+			if i < 1 || !bytes.HasPrefix(tokens[i-1], []byte("/")) {
+				continue
+			}
+			name := string(tokens[i-1])
+			objNum, ok := ctx.xobjs[name]
+			if !ok || ctx.visited[objNum] {
+				continue
+			}
+			obj, found := ctx.parser.objects[objNum]
+			if !found || obj.stream == nil || !isFormXObject(obj.dict) {
+				continue
+			}
+			subVisited := make(map[int]bool, len(ctx.visited)+1)
+			for k, v := range ctx.visited {
+				subVisited[k] = v
+			}
+			subVisited[objNum] = true
+			sub := &extractionContext{
+				parser:   ctx.parser,
+				fonts:    buildFontMapFromDict(ctx.parser, obj.dict),
+				xobjs:    buildXObjMapFromDict(ctx.parser, obj.dict),
+				mediaBox: ctx.mediaBox,
+				offX:     ctx.offX + ctmE,
+				offY:     ctx.offY + ctmF,
+				depth:    ctx.depth + 1,
+				visited:  subVisited,
+			}
+			results = append(results, parseTextOperatorsCtx(sub, obj.stream)...)
 		}
 	}
 	return results

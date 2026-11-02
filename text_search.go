@@ -72,7 +72,13 @@ func searchTextOnPage(parser *rawPDFParser, pageIndex int, query string, caseIns
 
 	page := parser.pages[pageIndex]
 	fonts := buildFontMap(parser, page)
-	texts := parseTextOperators(stream, fonts, page.mediaBox)
+	texts := parseTextOperatorsCtx(&extractionContext{
+		parser:   parser,
+		fonts:    fonts,
+		xobjs:    page.resources.xobjs,
+		mediaBox: page.mediaBox,
+		visited:  map[int]bool{},
+	}, stream)
 
 	if len(texts) == 0 {
 		return nil, nil
