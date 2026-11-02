@@ -380,3 +380,46 @@ func TestHTML_Base64Image(t *testing.T) {
 func itoa(i int) string {
 	return strconv.Itoa(i)
 }
+
+// TestHTML_TableHeaderRepeat verifies <thead> rows repeat on continuation pages.
+func TestHTML_TableHeaderRepeat(t *testing.T) {
+	pdf, font := newTestPDF(t)
+	if err := pdf.AddTTFFont("lib", font); err != nil {
+		t.Fatal(err)
+	}
+	var rows strings.Builder
+	for i := 1; i <= 80; i++ {
+		rows.WriteString(`<tr><td>Item `)
+		rows.WriteString(itoa(i))
+		rows.WriteString(`</td><td>`)
+		rows.WriteString(itoa(i * 2))
+		rows.WriteString(`</td></tr>`)
+	}
+	html := `<table border="1"><thead><tr><th>Product</th><th>Qty</th></tr></thead><tbody>` +
+		rows.String() + `</tbody></table>`
+	pdf.SetMargins(50, 50, 50, 50)
+	_, err := pdf.InsertHTMLPaginated(50, 60, 500, html, HTMLBoxOption{
+		DefaultFontFamily:  "lib",
+		PageTop:            60,
+		PageBottom:         792 - 50,
+		RepeatTableHeaders: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "hdr.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	if n := pdf.GetNumberOfPages(); n < 2 {
+		t.Fatalf("expected multi-page table, got %d pages", n)
+	}
+	data, _ := os.ReadFile(path)
+	text, err := ExtractAllPagesText(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(text, "Product"); n < 2 {
+		t.Errorf("header 'Product' repeated %d times, want >= 2", n)
+	}
+}

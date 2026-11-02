@@ -97,9 +97,8 @@ type htmlRenderer struct {
 	style   *htmlStyleResolver
 
 	// pagination state
-	paginate    bool        // automatic page breaks enabled
-	activeTable []*htmlNode // pending <thead> rows to repeat after breaks
-	brokePage   bool
+	paginate  bool // automatic page breaks enabled
+	brokePage bool
 }
 
 type htmlTableCell struct {
@@ -506,11 +505,25 @@ func (r *htmlRenderer) applyCSSProps(css map[string]string, state htmlRenderStat
 		}
 	}
 	if lh, ok := css["line-height"]; ok {
-		if v, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(lh), "px")), 64); err == nil && v > 0 {
-			// unitless multiplier, or px value relative to font size
-			if strings.HasSuffix(strings.TrimSpace(lh), "px") && state.fontSize > 0 {
+		lh = strings.TrimSpace(lh)
+		var v float64
+		var err error
+		switch {
+		case strings.HasSuffix(lh, "%"):
+			// percentage of the current font size
+			if p, perr := strconv.ParseFloat(strings.TrimSuffix(lh, "%"), 64); perr == nil && p > 0 && state.fontSize > 0 {
+				state.lineHeight = p / 100.0
+			}
+			break
+		case strings.HasSuffix(lh, "px"):
+			v, err = strconv.ParseFloat(strings.TrimSuffix(lh, "px"), 64)
+			if err == nil && v > 0 && state.fontSize > 0 {
 				state.lineHeight = (v * 0.75) / state.fontSize
-			} else {
+			}
+		default:
+			// unitless multiplier
+			v, err = strconv.ParseFloat(lh, 64)
+			if err == nil && v > 0 {
 				state.lineHeight = v
 			}
 		}
@@ -1121,11 +1134,12 @@ func (r *htmlRenderer) layoutLines(frags []textFragment, availW float64, firstIn
 				// avoid ending the line with no-end punctuation: move it down
 				for len(cur) > 0 && cur[len(cur)-1].kind == fragCJK &&
 					kinsokuNoEnd[firstRune(cur[len(cur)-1].text)] {
-					// prepend to the fragment being pushed (simple case)
-					f = textFragment{text: cur[len(cur)-1].text + f.text, kind: fragCJK, state: f.state}
-					w, _ = r.measureFragment(&f)
+					// prepend the removed fragment to the one being pushed
+					removed := cur[len(cur)-1]
 					cur = cur[:len(cur)-1]
-					curW -= w
+					curW -= removed.width
+					f = textFragment{text: removed.text + f.text, kind: fragCJK, state: f.state}
+					w, _ = r.measureFragment(&f)
 				}
 				flush()
 			}
@@ -1727,11 +1741,6 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 		}
 	}
 
-	// record thead rows for pagination repeat
-	if r.opt.RepeatTableHeaders {
-		r.activeTable = collectTableHeadRows(node)
-	}
-
 	// table-level background/border
 	tblBG := r.tableBackground(node)
 	tblBorder := r.tableBorder(node, state)
@@ -1772,21 +1781,9 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 	for _, cell := range grid.cells {
 		cellsByRow[cell.row] = append(cellsByRow[cell.row], cell)
 	}
-	rowOffset := 0.0
-	for row := 0; row < grid.rows; row++ {
-		rowH := rowHeights[row]
-		if row >= headerRows && curY+rowH > r.boxY+r.boxH {
-			// row doesn't fit: start a new page
-			r.cursorY = curY
-			if ok, err := r.ensureVerticalSpace(rowH); err != nil {
-				return err
-			} else if !ok {
-				break // no pagination: clip the rest
-			}
-			curY = r.cursorY
-			rowOffset = 0
-			_ = rowOffset // (reserved for rowspan handling)
-		}
+
+	// drawRow paints one grid row at y and returns y + its height
+	drawRow := func(row int, y float64) (float64, error) {
 		for _, cell := range cellsByRow[row] {
 			if cell.node == nil {
 				continue
@@ -1803,20 +1800,48 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 			for rr := cell.row; rr < cell.row+cell.rowspan && rr < len(rowHeights); rr++ {
 				h += rowHeights[rr]
 			}
-			if curY+h > r.boxY+r.boxH && !r.paginate {
+			if y+h > r.boxY+r.boxH && !r.paginate {
 				continue // clipped
 			}
 			cellState := cell.state
-			if err := r.drawHTMLTableCell(x, curY, w, h, cell, cellState, padding, tblBG, tblBorder); err != nil {
-				return err
+			if err := r.drawHTMLTableCell(x, y, w, h, cell, cellState, padding, tblBG, tblBorder); err != nil {
+				return y, err
 			}
 		}
-		curY += rowH
+		return y + rowHeights[row], nil
+	}
+
+	for row := 0; row < grid.rows; row++ {
+		rowH := rowHeights[row]
+		if row >= headerRows && curY+rowH > r.boxY+r.boxH {
+			// row doesn't fit: start a new page
+			r.cursorY = curY
+			if ok, err := r.ensureVerticalSpace(rowH); err != nil {
+				return err
+			} else if !ok {
+				break // no pagination: clip the rest
+			}
+			curY = r.cursorY
+			// repeat the header rows on the continuation page
+			if r.opt.RepeatTableHeaders {
+				for hr := 0; hr < headerRows; hr++ {
+					var err error
+					curY, err = drawRow(hr, curY)
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
+		var err error
+		curY, err = drawRow(row, curY)
+		if err != nil {
+			return err
+		}
 		r.cursorY = curY
 	}
 	r.cursorY = curY
 	r.cursorX = r.boxX
-	r.activeTable = nil
 	r.addVerticalSpace(state.fontSize * 0.2)
 	return nil
 }
@@ -1919,21 +1944,6 @@ type htmlGrid struct {
 	rows  int
 	cols  int
 	cells []htmlTableCell
-}
-
-// collectTableHeadRows returns the <thead> <tr> nodes of a table.
-func collectTableHeadRows(node *htmlNode) []*htmlNode {
-	var rows []*htmlNode
-	for _, child := range node.Children {
-		if child.Type == htmlNodeElement && child.Tag == "thead" {
-			for _, tr := range child.Children {
-				if tr.Type == htmlNodeElement && tr.Tag == "tr" {
-					rows = append(rows, tr)
-				}
-			}
-		}
-	}
-	return rows
 }
 
 // computeColumnWidths determines per-column widths:
