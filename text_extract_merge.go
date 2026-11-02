@@ -238,3 +238,18 @@ func ExtractPageLines(pdfData []byte, pageIndex int) ([]TextLine, error) {
 	}
 	return GroupIntoTextLines(texts), nil
 }
+
+// ExtractAllPagesLines extracts text from every page and returns it as
+// merged, position-aware lines. The PDF is parsed once — use this instead of
+// calling ExtractPageLines in a loop (each call would re-parse the file).
+func ExtractAllPagesLines(pdfData []byte) (map[int][]TextLine, error) {
+	pages, err := ExtractTextFromAllPages(pdfData)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int][]TextLine, len(pages))
+	for i, runs := range pages {
+		out[i] = GroupIntoTextLines(runs)
+	}
+	return out, nil
+}

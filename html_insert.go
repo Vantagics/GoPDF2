@@ -336,6 +336,12 @@ func (r *htmlRenderer) renderNode(node *htmlNode, state htmlRenderState) error {
 		return r.renderHR(node, state)
 	case "p", "div":
 		newState = r.applyCSSProps(css, newState, node)
+		if node.Tag == "p" && newState.marginTop == 0 && newState.marginBot == 0 {
+			// browser-like default: ~0.5em paragraph spacing when no CSS
+			// margin is specified
+			def := state.fontSize * 0.5 / r.unitConversion()
+			newState.marginTop, newState.marginBot = def, def
+		}
 		return r.renderBlock(node, newState)
 	case "h1", "h2", "h3", "h4", "h5", "h6":
 		newState.fontSize = headingFontSize(node.Tag)

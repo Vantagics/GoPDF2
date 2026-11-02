@@ -563,16 +563,74 @@ func glyphAdvance(fi *fontInfo, code int, fontSize float64) float64 {
 	return w / 1000.0 * fontSize
 }
 
+// trimPDFWS trims PDF whitespace from both ends of b.
+func trimPDFWS(b []byte) []byte {
+	start := 0
+	for start < len(b) && isPDFSpace(b[start]) {
+		start++
+	}
+	end := len(b)
+	for end > start && isPDFSpace(b[end-1]) {
+		end--
+	}
+	return b[start:end]
+}
+
+// fastParseFloat parses a PDF number token without allocating. Handles
+// [-]digits[.digits]; anything else (exponents) falls back to strconv.
+func fastParseFloat(b []byte) (float64, bool) {
+	i := 0
+	neg := false
+	if i < len(b) && (b[i] == '-' || b[i] == '+') {
+		neg = b[i] == '-'
+		i++
+	}
+	intPart := 0
+	digits := 0
+	for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+		intPart = intPart*10 + int(b[i]-'0')
+		i++
+		digits++
+	}
+	frac := 0.0
+	if i < len(b) && b[i] == '.' {
+		i++
+		scale := 0.1
+		fdigits := 0
+		for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+			frac += float64(b[i]-'0') * scale
+			scale *= 0.1
+			i++
+			fdigits++
+		}
+		if digits == 0 && fdigits == 0 {
+			return 0, false
+		}
+	} else if digits == 0 {
+		return 0, false
+	}
+	if i != len(b) {
+		// exponent or trailing junk — fall back to the full parser
+		v, err := strconv.ParseFloat(string(b), 64)
+		return v, err == nil
+	}
+	v := float64(intPart) + frac
+	if neg {
+		v = -v
+	}
+	return v, true
+}
+
 // shownAdvance computes the horizontal advance of a shown string token.
-func shownAdvance(rawToken string, fi *fontInfo, fontSize float64) float64 {
-	if fontSize <= 0 {
+func shownAdvance(rawToken []byte, fi *fontInfo, fontSize float64) float64 {
+	if fontSize <= 0 || len(rawToken) < 2 {
 		return 0
 	}
 	var data []byte
-	if strings.HasPrefix(rawToken, "<") && strings.HasSuffix(rawToken, ">") {
-		data = hexToBytes(strings.Trim(rawToken[1:len(rawToken)-1], " \n\r\t"))
-	} else if strings.HasPrefix(rawToken, "(") && strings.HasSuffix(rawToken, ")") {
-		data = []byte(unescapePDFString(rawToken[1 : len(rawToken)-1]))
+	if rawToken[0] == '<' && rawToken[len(rawToken)-1] == '>' {
+		data = hexBytes(trimPDFWS(rawToken[1 : len(rawToken)-1]))
+	} else if rawToken[0] == '(' && rawToken[len(rawToken)-1] == ')' {
+		data = []byte(unescapePDFString(string(rawToken[1 : len(rawToken)-1])))
 	} else {
 		return 0
 	}
@@ -595,7 +653,7 @@ func shownAdvance(rawToken string, fi *fontInfo, fontSize float64) float64 {
 
 // shownWidth returns the shown advance only when the font carries real glyph
 // width data; otherwise 0 (callers fall back to position-derived estimates).
-func shownWidth(rawToken string, fi *fontInfo, fontSize float64) float64 {
+func shownWidth(rawToken []byte, fi *fontInfo, fontSize float64) float64 {
 	if fi == nil || len(fi.widths) == 0 {
 		return 0
 	}
@@ -603,7 +661,7 @@ func shownWidth(rawToken string, fi *fontInfo, fontSize float64) float64 {
 }
 
 // tjWidth returns the TJ array advance when the font carries real widths.
-func tjWidth(arr []string, fi *fontInfo, fontSize float64) float64 {
+func tjWidth(arr [][]byte, fi *fontInfo, fontSize float64) float64 {
 	if fi == nil || len(fi.widths) == 0 {
 		return 0
 	}
@@ -611,7 +669,7 @@ func tjWidth(arr []string, fi *fontInfo, fontSize float64) float64 {
 	for _, item := range arr {
 		if isStringToken(item) {
 			total += shownAdvance(item, fi, fontSize)
-		} else if v, err := strconv.ParseFloat(item, 64); err == nil {
+		} else if v, ok := fastParseFloat(item); ok {
 			total -= v / 1000.0 * fontSize
 		}
 	}
@@ -623,7 +681,7 @@ func tjWidth(arr []string, fi *fontInfo, fontSize float64) float64 {
 
 // parseTextOperators parses PDF content stream text operators.
 func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]float64) []ExtractedText {
-	tokens := tokenize(stream)
+	tokens := tokenizeBytes(stream)
 	// Pre-allocate with estimated capacity based on stream size.
 	results := make([]ExtractedText, 0, len(stream)/100+16)
 
@@ -645,12 +703,6 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 
 	stack := make([]float64, 0, 64)
 	var scratch [8]float64 // reused by popN — operator arity is at most 6 (Tm/cm)
-	pushNum := func(s string) {
-		v, err := strconv.ParseFloat(s, 64)
-		if err == nil {
-			stack = append(stack, v)
-		}
-	}
 	popN := func(n int) []float64 {
 		if len(stack) < n {
 			stack = stack[:0]
@@ -664,13 +716,13 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 	for i := 0; i < len(tokens); i++ {
 		tok := tokens[i]
 
-		// Try to parse as number
-		if _, err := strconv.ParseFloat(tok, 64); err == nil {
-			pushNum(tok)
+		// Try to parse as number (allocation-free fast path)
+		if v, ok := fastParseFloat(tok); ok {
+			stack = append(stack, v)
 			continue
 		}
 
-		switch tok {
+		switch string(tok) {
 		case "BT":
 			inText = true
 			tmX, tmY = 0, 0
@@ -687,9 +739,8 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 			// font name is the token before the size number
 			// We need to look back in the original tokens
 			if i >= 2 {
-				fname := tokens[i-2]
-				if strings.HasPrefix(fname, "/") {
-					if f, ok := fonts[fname]; ok {
+				if bytes.HasPrefix(tokens[i-2], []byte("/")) {
+					if f, ok := fonts[string(tokens[i-2])]; ok {
 						curFont = f
 					}
 				}
@@ -740,7 +791,7 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 			// String is the previous token (in parentheses or hex)
 			if i >= 1 {
 				raw := findStringBefore(tokens, i)
-				text := decodeTextString(raw, curFont)
+				text := decodeTextString(string(raw), curFont)
 				if text != "" {
 					x := ctmA*tmX + ctmE
 					y := pageHeight - (ctmD*tmY + ctmF)
@@ -766,9 +817,9 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 			advance := 0.0
 			for _, item := range arr {
 				if isStringToken(item) {
-					combined.WriteString(decodeTextString(item, curFont))
+					combined.WriteString(decodeTextString(string(item), curFont))
 					advance += shownAdvance(item, curFont, fontSize)
-				} else if v, err := strconv.ParseFloat(item, 64); err == nil {
+				} else if v, ok := fastParseFloat(item); ok {
 					// TJ numbers displace position by tx = -v/1000 em
 					// (spec 9.4.3): negative values move right, widening the
 					// gap — those carry inter-word spaces in kerned fonts.
@@ -804,7 +855,7 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 			tmX, tmY = tlmX, tlmY
 			if i >= 1 {
 				raw := findStringBefore(tokens, i)
-				text := decodeTextString(raw, curFont)
+				text := decodeTextString(string(raw), curFont)
 				if text != "" {
 					x := ctmA*tmX + ctmE
 					y := pageHeight - (ctmD*tmY + ctmF)
@@ -826,7 +877,7 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 			tmX, tmY = tlmX, tlmY
 			if i >= 1 {
 				raw := findStringBefore(tokens, i)
-				text := decodeTextString(raw, curFont)
+				text := decodeTextString(string(raw), curFont)
 				if text != "" {
 					x := ctmA*tmX + ctmE
 					y := pageHeight - (ctmD*tmY + ctmF)
@@ -854,10 +905,30 @@ func parseTextOperators(stream []byte, fonts map[string]*fontInfo, mediaBox [4]f
 // maxTokens bounds the token count as a safety measure against pathological
 // streams; tokenization stops when the limit is reached (partial results are
 // still usable). Use 0 for no limit.
+// tokenize splits a content stream into string tokens (convenience wrapper
+// over tokenizeBytes for callers outside the text path).
 func tokenize(data []byte) []string {
+	raw := tokenizeBytes(data)
+	tokens := make([]string, len(raw))
+	for i, b := range raw {
+		tokens[i] = string(b)
+	}
+	return tokens
+}
+
+// interned delimiter tokens — appended without allocation
+var (
+	tokDictOpen   = []byte("<<")
+	tokDictClose  = []byte(">>")
+	tokArrayOpen  = []byte("[")
+	tokArrayClose = []byte("]")
+)
+
+// tokenizeBytes splits a PDF content stream into zero-copy byte tokens.
+func tokenizeBytes(data []byte) [][]byte {
 	const maxTokens = 4_000_000
 	// Pre-allocate with estimated capacity.
-	tokens := make([]string, 0, len(data)/4+16)
+	tokens := make([][]byte, 0, len(data)/4+16)
 	i := 0
 	n := len(data)
 	for i < n {
@@ -890,7 +961,7 @@ func tokenize(data []byte) []string {
 				}
 				i++
 			}
-			tokens = append(tokens, string(data[start:i]))
+			tokens = append(tokens, data[start:i])
 			continue
 		}
 		// hex string <...>
@@ -903,28 +974,28 @@ func tokenize(data []byte) []string {
 			if i < n {
 				i++ // skip >
 			}
-			tokens = append(tokens, string(data[start:i]))
+			tokens = append(tokens, data[start:i])
 			continue
 		}
 		// dict << >>
 		if data[i] == '<' && i+1 < n && data[i+1] == '<' {
-			tokens = append(tokens, "<<")
+			tokens = append(tokens, tokDictOpen)
 			i += 2
 			continue
 		}
 		if data[i] == '>' && i+1 < n && data[i+1] == '>' {
-			tokens = append(tokens, ">>")
+			tokens = append(tokens, tokDictClose)
 			i += 2
 			continue
 		}
 		// array delimiters
 		if data[i] == '[' {
-			tokens = append(tokens, "[")
+			tokens = append(tokens, tokArrayOpen)
 			i++
 			continue
 		}
 		if data[i] == ']' {
-			tokens = append(tokens, "]")
+			tokens = append(tokens, tokArrayClose)
 			i++
 			continue
 		}
@@ -938,7 +1009,7 @@ func tokenize(data []byte) []string {
 			i++
 		}
 		if i > start {
-			tokens = append(tokens, string(data[start:i]))
+			tokens = append(tokens, data[start:i])
 		} else {
 			// Unmatched delimiter (e.g. a stray ')' or '>'): skip it.
 			// Without this the loop never advances and extraction hangs.
@@ -951,33 +1022,33 @@ func tokenize(data []byte) []string {
 	return tokens
 }
 
-func isStringToken(s string) bool {
-	return (strings.HasPrefix(s, "(") && strings.HasSuffix(s, ")")) ||
-		(strings.HasPrefix(s, "<") && strings.HasSuffix(s, ">") && !strings.HasPrefix(s, "<<"))
+func isStringToken(s []byte) bool {
+	return (bytes.HasPrefix(s, []byte("(")) && bytes.HasSuffix(s, []byte(")"))) ||
+		(bytes.HasPrefix(s, []byte("<")) && bytes.HasSuffix(s, []byte(">")) && !bytes.HasPrefix(s, tokDictOpen))
 }
 
-func findStringBefore(tokens []string, opIdx int) string {
+func findStringBefore(tokens [][]byte, opIdx int) []byte {
 	for j := opIdx - 1; j >= 0; j-- {
 		if isStringToken(tokens[j]) {
 			return tokens[j]
 		}
 		// stop if we hit another operator
-		if _, err := strconv.ParseFloat(tokens[j], 64); err != nil && tokens[j] != "[" && tokens[j] != "]" {
+		if _, ok := fastParseFloat(tokens[j]); !ok && !bytes.Equal(tokens[j], tokArrayOpen) && !bytes.Equal(tokens[j], tokArrayClose) {
 			break
 		}
 	}
-	return ""
+	return nil
 }
 
-func findArrayBefore(tokens []string, opIdx int) []string {
+func findArrayBefore(tokens [][]byte, opIdx int) [][]byte {
 	// Walk backwards to find matching [ ... ]
 	end := -1
 	start := -1
 	for j := opIdx - 1; j >= 0; j-- {
-		if tokens[j] == "]" {
+		if bytes.Equal(tokens[j], tokArrayClose) {
 			end = j
 		}
-		if tokens[j] == "[" {
+		if bytes.Equal(tokens[j], tokArrayOpen) {
 			start = j
 			break
 		}
@@ -1011,7 +1082,7 @@ func decodeTextString(raw string, fi *fontInfo) string {
 		hex = strings.ReplaceAll(hex, " ", "")
 		hex = strings.ReplaceAll(hex, "\n", "")
 		hex = strings.ReplaceAll(hex, "\r", "")
-		return decodeStringBytes(hexToBytes(hex), fi)
+		return decodeStringBytes(hexBytes([]byte(hex)), fi)
 	}
 	if strings.HasPrefix(raw, "(") && strings.HasSuffix(raw, ")") {
 		inner := raw[1 : len(raw)-1]
@@ -1025,6 +1096,29 @@ func decodeTextString(raw string, fi *fontInfo) string {
 func hexToBytes(hex string) []byte {
 	if len(hex)%2 == 1 {
 		hex += "0"
+	}
+	out := make([]byte, len(hex)/2)
+	for i := 0; i+1 < len(hex); i += 2 {
+		hi := hexVal(hex[i])
+		lo := hexVal(hex[i+1])
+		out[i/2] = byte(hi<<4 | lo)
+	}
+	return out
+}
+
+// hexBytes converts a hex byte slice (whitespace removed) to bytes.
+func hexBytes(hex []byte) []byte {
+	// strip whitespace in place
+	w := 0
+	for r := 0; r < len(hex); r++ {
+		if !isPDFSpace(hex[r]) {
+			hex[w] = hex[r]
+			w++
+		}
+	}
+	hex = hex[:w]
+	if len(hex)%2 == 1 {
+		hex = append(hex, '0')
 	}
 	out := make([]byte, len(hex)/2)
 	for i := 0; i+1 < len(hex); i += 2 {

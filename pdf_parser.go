@@ -73,14 +73,80 @@ func (p *rawPDFParser) parse() error {
 	return nil
 }
 
+// objHeaderLoc locates one "N 0 obj" header: the object number, the start of
+// the header (first digit) and the offset just past "obj".
+type objHeaderLoc struct {
+	num       int
+	start     int // offset of the first digit of N
+	bodyStart int // offset just past "obj"
+}
+
+// isPDFSpace reports whether c is PDF whitespace.
+func isPDFSpace(c byte) bool {
+	switch c {
+	case ' ', '\n', '\r', '\t', '\f', 0:
+		return true
+	}
+	return false
+}
+
+// scanObjectHeaders finds every "N 0 obj" header without regexp. The regex
+// equivalent dominated extraction CPU on large files; a needle scan for
+// " obj" with backward parsing is an order of magnitude faster.
+func scanObjectHeaders(data []byte) []objHeaderLoc {
+	var out []objHeaderLoc
+	const needle = " obj"
+	pos := 0
+	for {
+		idx := bytes.Index(data[pos:], []byte(needle))
+		if idx < 0 {
+			break
+		}
+		i := pos + idx
+		pos = i + len(needle)
+		// parse backwards: skip spaces, expect generation '0', skip spaces,
+		// parse digits, verify a space separates N and the generation
+		j := i - 1
+		for j >= 0 && isPDFSpace(data[j]) {
+			j--
+		}
+		if j < 0 || data[j] != '0' {
+			continue
+		}
+		j--
+		for j >= 0 && isPDFSpace(data[j]) {
+			j--
+		}
+		e := j // last digit of N
+		for j >= 0 && data[j] >= '0' && data[j] <= '9' {
+			j--
+		}
+		if j == e || e+1 >= len(data) || !isPDFSpace(data[e+1]) {
+			continue // no digits, or the "0" was part of a multi-digit generation
+		}
+		if j >= 0 {
+			c := data[j]
+			if c != '>' && c != '%' && !isPDFSpace(c) {
+				continue // not a token boundary before N
+			}
+		}
+		num, err := strconv.Atoi(string(data[j+1 : e+1]))
+		if err != nil {
+			continue
+		}
+		out = append(out, objHeaderLoc{num: num, start: j + 1, bodyStart: i + len(needle)})
+	}
+	return out
+}
+
 // parseObjects finds all "N 0 obj ... endobj" blocks.
 func (p *rawPDFParser) parseObjects() {
-	matches := reObjHeader.FindAllSubmatchIndex(p.data, -1)
+	headers := scanObjectHeaders(p.data)
 	// Locate all "endobj" markers once, then pair them with object headers
 	// using a two-pointer merge (both are in file order). Scanning from each
 	// object start would be O(objects × filesize) on large PDFs.
 	endObj := []byte("endobj")
-	endPositions := make([]int, 0, len(matches))
+	endPositions := make([]int, 0, len(headers))
 	for pos := 0; ; {
 		idx := bytes.Index(p.data[pos:], endObj)
 		if idx < 0 {
@@ -91,10 +157,9 @@ func (p *rawPDFParser) parseObjects() {
 		pos += len(endObj)
 	}
 	nextEnd := 0
-	for _, m := range matches {
-		numStr := string(p.data[m[2]:m[3]])
-		num, _ := strconv.Atoi(numStr)
-		objStart := m[0]
+	for _, h := range headers {
+		num := h.num
+		objStart := h.start
 		// find the first endobj at or after this object's start
 		for nextEnd < len(endPositions) && endPositions[nextEnd] < objStart {
 			nextEnd++
