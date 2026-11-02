@@ -201,14 +201,21 @@ func (t *tableLayout) DrawTable() error {
 		bottomLimit = pageH // failsafe
 	}
 
-	// segments track per-page table extents for border drawing
-	type segment struct{ y1, y2 float64 }
+	// segments track per-page table extents for border drawing; headerH is
+	// the drawn header height of that segment (differs from rowHeight when
+	// auto row heights are enabled and the header wraps)
+	type segment struct {
+		y1, y2  float64
+		headerH float64
+	}
 	var segments []segment
 	segStart := y
+	segHeaderH := t.headerRowHeight()
 
 	drawHeader := func(y float64) (float64, error) {
 		x := t.startX
 		h := t.headerRowHeight()
+		segHeaderH = h
 		for _, col := range t.columns {
 			if err := t.drawCell(
 				x,
@@ -234,7 +241,7 @@ func (t *tableLayout) DrawTable() error {
 	}
 
 	breakPage := func() error {
-		segments = append(segments, segment{segStart, y})
+		segments = append(segments, segment{segStart, y, segHeaderH})
 		t.pdf.AddPage()
 		y = t.pdf.margins.Top
 		if y <= 0 {
@@ -337,11 +344,11 @@ func (t *tableLayout) DrawTable() error {
 		}
 		y += rowH
 	}
-	segments = append(segments, segment{segStart, y})
+	segments = append(segments, segment{segStart, y, segHeaderH})
 
 	// Draw the outer border of each page segment (plus the header rule).
 	for _, seg := range segments {
-		if err := t.drawSegmentBorder(seg.y1, seg.y2); err != nil {
+		if err := t.drawSegmentBorder(seg.y1, seg.y2, seg.headerH); err != nil {
 			return err
 		}
 	}
@@ -467,7 +474,7 @@ func (t *tableLayout) wrapLineCount(text string, width, fontSize float64) (int, 
 }
 
 // drawSegmentBorder draws the outer border of one page segment of the table.
-func (t *tableLayout) drawSegmentBorder(y1, y2 float64) error {
+func (t *tableLayout) drawSegmentBorder(y1, y2, headerH float64) error {
 	x1 := t.startX
 	x2 := t.startX
 
@@ -480,8 +487,8 @@ func (t *tableLayout) drawSegmentBorder(y1, y2 float64) error {
 		return err
 	}
 
-	// Draw borders of the header
-	return t.drawBorder(x1, y1, x2, y1+t.rowHeight, t.headerStyle.BorderStyle)
+	// Draw borders of the header (height as actually drawn)
+	return t.drawBorder(x1, y1, x2, y1+headerH, t.headerStyle.BorderStyle)
 }
 
 // Draws a single cell of the table

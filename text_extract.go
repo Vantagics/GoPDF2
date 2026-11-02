@@ -1143,9 +1143,13 @@ func hexVal(c byte) byte {
 // using the font's ToUnicode CMap, encoding tables, predefined CMaps and
 // legacy CJK decoders as available.
 func decodeStringBytes(data []byte, fi *fontInfo) string {
-	// UTF-16BE BOM inside the string — used by PDF 2.0 text strings.
+	// BOMs inside the string — PDF 2.0 text strings may be UTF-16BE
+	// (FE FF) or UTF-8 (EF BB BF).
 	if len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF {
 		return decodeUTF16BE(data[2:])
+	}
+	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+		return string(data[3:])
 	}
 	if fi == nil {
 		return string(data)

@@ -99,6 +99,16 @@ type htmlRenderer struct {
 	// pagination state
 	paginate  bool // automatic page breaks enabled
 	brokePage bool
+
+	// imgCache memoizes <img> resolution per renderer (avoid re-reading and
+	// re-decoding the same image file); created lazily by newImageFragment
+	imgCache map[string]imageHolderCacheEntry
+}
+
+// imageHolderCacheEntry memoizes an <img> src resolution.
+type imageHolderCacheEntry struct {
+	holder ImageHolder
+	err    error
 }
 
 type htmlTableCell struct {
@@ -304,7 +314,7 @@ func (r *htmlRenderer) renderNode(node *htmlNode, state htmlRenderState) error {
 		if text == "" {
 			return nil
 		}
-		return r.renderTextFragments(splitToFragments(text, state), state, nil, 0)
+		return r.renderTextFragments(splitToFragments(text, state), state, 0)
 	}
 
 	// element node
@@ -394,6 +404,8 @@ func (r *htmlRenderer) renderNode(node *htmlNode, state htmlRenderState) error {
 		newState = r.applyCSSProps(css, newState, node)
 		if _, ok := css["color"]; !ok {
 			newState.colorR, newState.colorG, newState.colorB = 0, 0, 255
+		}
+		if td, hasTD := css["text-decoration"]; !hasTD || !strings.Contains(td, "none") {
 			newState.fontStyle |= Underline
 		}
 		href := node.Attrs["href"]
@@ -897,10 +909,14 @@ func (r *htmlRenderer) collectInlineFragments(nodes []*htmlNode, state htmlRende
 		case "a":
 			// inline link: style the runs and record the href so the
 			// clickable annotation is drawn at the rendered rect
-			if _, hasColor := r.style.resolve(node)["color"]; !hasColor {
+			css := r.style.resolve(node)
+			if _, hasColor := css["color"]; !hasColor {
 				st.colorR, st.colorG, st.colorB = 0, 0, 255
 			}
-			st.fontStyle |= Underline
+			// default underline unless CSS explicitly disables it
+			if td, hasTD := css["text-decoration"]; !hasTD || !strings.Contains(td, "none") {
+				st.fontStyle |= Underline
+			}
 			href := node.Attrs["href"]
 			before := len(*frags)
 			r.collectInlineFragments(node.Children, st, frags, blocks)
@@ -1013,7 +1029,7 @@ func (r *htmlRenderer) flowBlock(children []*htmlNode, state htmlRenderState, de
 		r.cursorY += state.marginTop
 	}
 
-	if err := r.renderTextFragments(frags, state, nil, state.textIndent); err != nil {
+	if err := r.renderTextFragments(frags, state, state.textIndent); err != nil {
 		return err
 	}
 
@@ -1168,15 +1184,12 @@ func firstRune(s string) rune {
 }
 
 // renderTextFragments lays out and renders a fragment run.
-func (r *htmlRenderer) renderTextFragments(frags []textFragment, state htmlRenderState, stopAt func() bool, firstIndent float64) error {
+func (r *htmlRenderer) renderTextFragments(frags []textFragment, state htmlRenderState, firstIndent float64) error {
 	if len(frags) == 0 {
 		return nil
 	}
 	lines := r.layoutLines(frags, r.boxW, firstIndent)
 	for li, line := range lines {
-		if stopAt != nil && stopAt() {
-			return nil
-		}
 		// page overflow check
 		lh := r.lineHeightOf(lineMaxState(line))
 		if !r.paginate {
@@ -1331,14 +1344,25 @@ func (r *htmlRenderer) newImageFragment(node *htmlNode, state htmlRenderState) *
 		return nil
 	}
 	var holder ImageHolder
-	var err error
-	if strings.HasPrefix(src, "data:") {
-		holder, err = imageHolderFromDataURI(src)
+	if e, cached := r.imgCache[src]; cached {
+		if e.err != nil {
+			return nil
+		}
+		holder = e.holder
 	} else {
-		holder, err = ImageHolderByPath(src)
-	}
-	if err != nil {
-		return nil
+		var err error
+		if strings.HasPrefix(src, "data:") {
+			holder, err = imageHolderFromDataURI(src)
+		} else {
+			holder, err = ImageHolderByPath(src)
+		}
+		if r.imgCache == nil {
+			r.imgCache = make(map[string]imageHolderCacheEntry)
+		}
+		r.imgCache[src] = imageHolderCacheEntry{holder: holder, err: err}
+		if err != nil {
+			return nil
+		}
 	}
 	iw, ih, err := imageHolderDimensions(holder)
 	if err != nil {

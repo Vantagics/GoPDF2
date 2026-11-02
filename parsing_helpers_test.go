@@ -1,6 +1,7 @@
 package gopdf
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -211,5 +212,54 @@ func TestParseCSSColorRGBA(t *testing.T) {
 			t.Errorf("parseCSSColor(%q) = (%d,%d,%d,%v), want (%d,%d,%d,%v)",
 				c.in, r, g, b, ok, c.r, c.g, c.b, c.ok)
 		}
+	}
+}
+
+// TestParseHTMLRawScriptStyle verifies <script>/<style> content is treated
+// as raw text (markup inside must not create elements).
+func TestParseHTMLRawScriptStyle(t *testing.T) {
+	nodes := parseHTML(`<p>a</p><script>if (a<b && c>d) { run("<div>"); }</script><p>after</p>`)
+	var tags []string
+	var walk func([]*htmlNode)
+	walk = func(ns []*htmlNode) {
+		for _, n := range ns {
+			if n.Type == htmlNodeElement {
+				tags = append(tags, n.Tag)
+				walk(n.Children)
+			}
+		}
+	}
+	walk(nodes)
+	for _, tag := range tags {
+		if tag == "b" || tag == "div" {
+			t.Errorf("markup inside <script> leaked as element: %v", tags)
+		}
+	}
+	// the style rule with a '<' survives as raw CSS text
+	nodes = parseHTML(`<style>p:before { content: "<"; color: red; }</style><p>x</p>`)
+	if len(nodes) < 2 {
+		t.Fatalf("style + p expected")
+	}
+	if nodes[0].Tag != "style" || len(nodes[0].Children) != 1 || nodes[0].Children[0].Type != htmlNodeText {
+		t.Errorf("style content should be a single raw text node")
+	}
+	if !strings.Contains(nodes[0].Children[0].Text, `content: "<"`) {
+		t.Errorf("style raw text truncated: %q", nodes[0].Children[0].Text)
+	}
+	// unterminated script consumes the rest without hanging
+	nodes = parseHTML(`<p>x</p><script>var s = 1;`)
+	if len(nodes) != 2 {
+		t.Errorf("unterminated script: %d nodes", len(nodes))
+	}
+}
+
+// TestParseHTMLEntitiesInAttrs verifies entity decoding in attributes.
+func TestParseHTMLEntitiesInAttrs(t *testing.T) {
+	nodes := parseHTML(`<a href="x?a=1&amp;b=2" title="&#39;q&#39;">l</a>`)
+	if nodes[0].Attrs["href"] != "x?a=1&b=2" {
+		t.Errorf("href entity decode: %q", nodes[0].Attrs["href"])
+	}
+	if nodes[0].Attrs["title"] != "'q'" {
+		t.Errorf("title entity decode: %q", nodes[0].Attrs["title"])
 	}
 }

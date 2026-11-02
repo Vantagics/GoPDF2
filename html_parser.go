@@ -25,7 +25,9 @@ type htmlNode struct {
 }
 
 // parseHTML parses a simplified HTML string into a tree of htmlNode.
-// Supported tags: b, i, u, s, br, p, span, font, img, h1-h6, ul, ol, li, a, hr, sub, sup, center
+// Supported tags: b, i, u, s, br, p, div, span, font, img, h1-h6, ul, ol, li,
+// a, hr, sub, sup, center, blockquote, pre, code, table/thead/tbody/tfoot/tr/
+// th/td/caption/colgroup/col, style (raw text), script (raw text, ignored).
 func parseHTML(html string) []*htmlNode {
 	p := &htmlParser{input: html}
 	return p.parseNodes()
@@ -122,6 +124,25 @@ func (p *htmlParser) parseElement() *htmlNode {
 
 	// self-closing or void elements
 	if selfClose || isVoidElement(node.Tag) {
+		return node
+	}
+
+	// <script> and <style> contain raw text (markup inside must not be
+	// parsed): consume everything up to the matching close tag verbatim
+	if node.Tag == "script" || node.Tag == "style" {
+		closeTag := "</" + node.Tag
+		rest := strings.ToLower(p.input[p.pos:])
+		idx := strings.Index(rest, closeTag)
+		if idx >= 0 {
+			node.Children = []*htmlNode{{Type: htmlNodeText, Text: p.input[p.pos : p.pos+idx]}}
+			p.pos += idx
+		} else {
+			// unterminated: consume the rest as raw text
+			node.Children = []*htmlNode{{Type: htmlNodeText, Text: p.input[p.pos:]}}
+			p.pos = len(p.input)
+			return node
+		}
+		p.consumeClosingTag(node.Tag)
 		return node
 	}
 
