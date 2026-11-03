@@ -423,3 +423,34 @@ func TestHTML_TableHeaderRepeat(t *testing.T) {
 		t.Errorf("header 'Product' repeated %d times, want >= 2", n)
 	}
 }
+
+// TestHTML_BlockBackground verifies block-level background-color renders
+// full-width bands behind each line before the text (z-order).
+func TestHTML_BlockBackground(t *testing.T) {
+	pdf, font := newTestPDF(t)
+	if err := pdf.AddTTFFont("lib", font); err != nil {
+		t.Fatal(err)
+	}
+	html := `<div style="background-color: #ffe0e0">Line one of the shaded block wraps here, and</div>` +
+		`<p>normal paragraph after</p>`
+	if _, err := pdf.InsertHTMLBox(50, 50, 300, 300, html, HTMLBoxOption{DefaultFontFamily: "lib"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "blockbg.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	parser, _ := newRawPDFParser(data)
+	stream := parser.getPageContentStream(0)
+	s := string(stream)
+	if !strings.Contains(s, "0.878 0.878 rg") {
+		t.Errorf("block background fill color not found in stream")
+	}
+	// the fill rect must appear BEFORE the text of the shaded block
+	reIdx := strings.Index(s, "0.878 0.878 rg")
+	txtIdx := strings.Index(s, "Line")
+	if txtIdx >= 0 && reIdx > txtIdx {
+		t.Errorf("background drawn after text (z-order wrong)")
+	}
+}

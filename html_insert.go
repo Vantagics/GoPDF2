@@ -1193,6 +1193,13 @@ func (r *htmlRenderer) renderTextFragments(frags []textFragment, state htmlRende
 		return nil
 	}
 	lines := r.layoutLines(frags, r.boxW, firstIndent)
+	return r.renderTextLines(lines, state)
+}
+
+// renderTextLines renders the laid-out lines of a paragraph block. When a
+// block background color is set, a full-width rect is drawn beneath each
+// line (correct z-order and pagination-safe).
+func (r *htmlRenderer) renderTextLines(lines [][]textFragment, state htmlRenderState) error {
 	for li, line := range lines {
 		// page overflow check
 		lh := r.lineHeightOf(lineMaxState(line))
@@ -1206,6 +1213,12 @@ func (r *htmlRenderer) renderTextFragments(frags []textFragment, state htmlRende
 			} else if !ok {
 				return nil
 			}
+		}
+
+		// block-level background: full-width band behind the line
+		if state.hasBg {
+			r.gp.SetFillColor(state.bgR, state.bgG, state.bgB)
+			r.gp.RectFromUpperLeftWithStyle(r.boxX, r.cursorY, r.boxW, lh, "F")
 		}
 
 		lineW := 0.0
