@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   centered headings rendered left-aligned
 - **HTML table `RepeatTableHeaders`** was stored but never drawn; `<thead>`
   rows now repeat on continuation pages
+- **Rowspan rows no longer orphaned across page breaks**: pages break between
+  row groups (rows joined by a rowspan cell stay together); groups taller
+  than a whole page fall back to row-level breaking
 - Default `<p>` spacing restored (paragraphs without CSS collapsed to a bare
   line-height gap)
 - **Data race** in the cached CJK decoders (lazy map write) — immutable

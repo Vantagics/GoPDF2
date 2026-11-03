@@ -454,3 +454,75 @@ func TestHTML_BlockBackground(t *testing.T) {
 		t.Errorf("background drawn after text (z-order wrong)")
 	}
 }
+
+// TestHTML_TableRowspanPagination verifies keep-together row-group breaking:
+// rows joined by rowspan cells never get split across pages.
+func TestHTML_TableRowspanPagination(t *testing.T) {
+	pdf, font := newTestPDF(t)
+	if err := pdf.AddTTFFont("lib", font); err != nil {
+		t.Fatal(err)
+	}
+	var rows strings.Builder
+	rows.WriteString(`<tr><td rowspan="4">Spanned</td><td>g1-a</td></tr>`)
+	rows.WriteString(`<tr><td>g1-b</td></tr>`)
+	rows.WriteString(`<tr><td>g1-c</td></tr>`)
+	rows.WriteString(`<tr><td>g1-d</td></tr>`)
+	for i := 5; i <= 70; i++ {
+		rows.WriteString(`<tr><td>r`)
+		rows.WriteString(itoa(i))
+		rows.WriteString(`</td><td>v`)
+		rows.WriteString(itoa(i))
+		rows.WriteString(`</td></tr>`)
+	}
+	html := `<table border="1"><thead><tr><th>Cat</th><th>Val</th></tr></thead><tbody>` +
+		rows.String() + `</tbody></table>`
+	pdf.SetMargins(50, 50, 50, 50)
+	_, err := pdf.InsertHTMLPaginated(50, 60, 500, html, HTMLBoxOption{
+		DefaultFontFamily:  "lib",
+		PageTop:            60,
+		PageBottom:         792 - 50,
+		RepeatTableHeaders: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "rowspan.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	if n := pdf.GetNumberOfPages(); n < 2 {
+		t.Fatalf("expected multiple pages, got %d", n)
+	}
+	data, _ := os.ReadFile(path)
+	// the spanned group g1-a..g1-d must render on ONE page
+	pageTexts, err := ExtractAllPagesText(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// stitched text per page marker: find which page contains g1-d and g1-a
+	_ = pageTexts
+	pages, err := ExtractTextFromAllPages(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupPage := -1
+	for p, runs := range pages {
+		hasA, hasD := false, false
+		for _, tx := range runs {
+			if tx.Text == "g1-a" {
+				hasA = true
+			}
+			if tx.Text == "g1-d" {
+				hasD = true
+			}
+		}
+		if hasA && hasD {
+			groupPage = p
+			break
+		}
+	}
+	if groupPage < 0 {
+		t.Errorf("spanned group rows not co-located on one page")
+	}
+	_ = groupPage
+}

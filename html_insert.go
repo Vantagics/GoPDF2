@@ -1861,32 +1861,93 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 		return y + rowHeights[row], nil
 	}
 
+	// Row-group keep-together: a page break must not split a group of rows
+	// joined by a rowspan cell (the span would be orphaned on the next
+	// page). Groups are bounded by scanning span reach; groups taller than
+	// a whole page fall back to row-level breaking.
+	type rowSeg struct{ start, end int }
+	var segs []rowSeg
+	segStart := 0
+	maxEnd := -1
 	for row := 0; row < grid.rows; row++ {
-		rowH := rowHeights[row]
-		if row >= headerRows && curY+rowH > r.boxY+r.boxH {
-			// row doesn't fit: start a new page
-			r.cursorY = curY
-			if ok, err := r.ensureVerticalSpace(rowH); err != nil {
-				return err
-			} else if !ok {
-				break // no pagination: clip the rest
-			}
-			curY = r.cursorY
-			// repeat the header rows on the continuation page
-			if r.opt.RepeatTableHeaders {
-				for hr := 0; hr < headerRows; hr++ {
-					var err error
-					curY, err = drawRow(hr, curY)
-					if err != nil {
-						return err
-					}
+		for _, cell := range cellsByRow[row] {
+			if cell.rowspan > 1 {
+				if e := row + cell.rowspan - 1; e > maxEnd {
+					maxEnd = e
 				}
 			}
 		}
-		var err error
-		curY, err = drawRow(row, curY)
-		if err != nil {
-			return err
+		if row >= maxEnd && row >= headerRows-1 && row+1 < grid.rows {
+			segs = append(segs, rowSeg{segStart, row})
+			segStart = row + 1
+		}
+	}
+	if segStart < grid.rows {
+		segs = append(segs, rowSeg{segStart, grid.rows - 1})
+	}
+
+	rowsHeight := func(a, b int) float64 {
+		h := 0.0
+		for i := a; i <= b && i < len(rowHeights); i++ {
+			h += rowHeights[i]
+		}
+		return h
+	}
+
+	drawHeaderRows := func(y *float64) error {
+		if !r.opt.RepeatTableHeaders {
+			return nil
+		}
+		for hr := 0; hr < headerRows; hr++ {
+			var err error
+			*y, err = drawRow(hr, *y)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for _, seg := range segs {
+		segHeight := rowsHeight(seg.start, seg.end)
+		segFits := curY+segHeight <= r.boxY+r.boxH
+
+		if seg.start >= headerRows && !segFits && r.paginate && segHeight <= r.boxH {
+			// keep-together break: start the group on a fresh page
+			r.cursorY = curY
+			ok, err := r.ensureVerticalSpace(segHeight)
+			if err != nil {
+				return err
+			} else if !ok {
+				break
+			}
+			curY = r.cursorY
+			if err := drawHeaderRows(&curY); err != nil {
+				return err
+			}
+		}
+
+		giant := segHeight > r.boxH // group exceeds a whole page: row fallback
+		for row := seg.start; row <= seg.end; row++ {
+			rowH := rowHeights[row]
+			if giant && row >= headerRows && curY+rowH > r.boxY+r.boxH && r.paginate {
+				r.cursorY = curY
+				ok, err := r.ensureVerticalSpace(rowH)
+				if err != nil {
+					return err
+				} else if !ok {
+					break
+				}
+				curY = r.cursorY
+				if err := drawHeaderRows(&curY); err != nil {
+					return err
+				}
+			}
+			var err error
+			curY, err = drawRow(row, curY)
+			if err != nil {
+				return err
+			}
 		}
 		r.cursorY = curY
 	}
