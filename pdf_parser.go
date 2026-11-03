@@ -33,10 +33,12 @@ type rawPDFParser struct {
 
 	// form caches (per parser instance = per extraction call): form streams
 	// recur on every page (stamps, watermarks) — fonts, nested XObjects and
-	// the un-offset runs are parsed once and translated on reuse
-	fontCache     map[int]map[string]*fontInfo
-	xobjCache     map[int]map[string]int
-	formTextCache map[int][]ExtractedText
+	// the un-offset runs are parsed once and translated on reuse. Runs are
+	// cached per mediaBox height: base Y depends on the calling page's
+	// height, and pages within one document may differ.
+	fontCache map[int]map[string]*fontInfo
+	xobjCache map[int]map[string]int
+	formRuns  map[int]map[float64][]ExtractedText // objNum -> pageH -> runs
 }
 
 // rawPDFObject holds a parsed PDF object.
@@ -67,7 +69,7 @@ func newRawPDFParser(data []byte) (*rawPDFParser, error) {
 		objects:       make(map[int]rawPDFObject),
 		fontCache:     make(map[int]map[string]*fontInfo),
 		xobjCache:     make(map[int]map[string]int),
-		formTextCache: make(map[int][]ExtractedText),
+		formRuns:      make(map[int]map[float64][]ExtractedText),
 	}
 	if err := p.parse(); err != nil {
 		return nil, fmt.Errorf("pdf parse: %w", err)

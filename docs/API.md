@@ -184,6 +184,10 @@ headers (`opt.RepeatTableHeaders`) and an `opt.OnPageBreak` callback.
 
 **CJK line breaking:** CJK text wraps per character with kinsoku rules (no line-starting punctuation, no line-ending open brackets).
 
+**Block backgrounds:** `background-color` on block elements paints full-width bands behind each line (correct z-order, pagination-safe).
+
+**Table pagination:** `InsertHTMLPaginated` keeps rows joined by rowspan cells together across page breaks (row-group keep-together; oversized groups fall back to row-level breaking) and repeats `<thead>` rows when `RepeatTableHeaders` is set.
+
 **Color formats:** `#RGB`, `#RRGGBB`, `rgb(r,g,b)`, `rgba(r,g,b,a)` (alpha ignored), CSS named colors
 
 **Font size formats:** `12pt`, `16px`, `1.5em`, `150%`, named sizes (small, medium, large, etc.)

@@ -1008,7 +1008,13 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 			if !found || obj.stream == nil || !isFormXObject(obj.dict) {
 				continue
 			}
-			baseRuns, ok := ctx.parser.formTextCache[objNum]
+			pageH := ctx.mediaBox[3] - ctx.mediaBox[1] // runs are per page height
+			runsForPage := ctx.parser.formRuns[objNum]
+			if runsForPage == nil {
+				runsForPage = make(map[float64][]ExtractedText)
+				ctx.parser.formRuns[objNum] = runsForPage
+			}
+			baseRuns, ok := runsForPage[pageH]
 			if !ok {
 				subVisited := make(map[int]bool, len(ctx.visited)+1)
 				for k, v := range ctx.visited {
@@ -1023,7 +1029,7 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 					visited:  subVisited,
 				}
 				baseRuns = parseTextOperatorsCtx(sub, obj.stream)
-				ctx.parser.formTextCache[objNum] = baseRuns
+				runsForPage[pageH] = baseRuns
 			}
 			// translate the cached un-offset runs by the cumulative Do offset
 			offX := ctx.offX + ctmE

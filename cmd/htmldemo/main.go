@@ -4,9 +4,23 @@ package main
 
 import (
 	"log"
+	"strconv"
+	"strings"
 
 	gopdf "github.com/VantageDataChat/GoPDF2"
 )
+
+func fillRows() string {
+	var b strings.Builder
+	for i := 0; i < 40; i++ {
+		b.WriteString(`<tr><td>r`)
+		b.WriteString(strconv.Itoa(i + 5))
+		b.WriteString(`</td><td>v`)
+		b.WriteString(strconv.Itoa(i + 5))
+		b.WriteString(`</td></tr>`)
+	}
+	return b.String()
+}
 
 func main() {
 	pdf := gopdf.GoPdf{}
@@ -24,7 +38,7 @@ func main() {
 	cjkFont := `C:\Windows\Fonts\simhei.ttf`
 	_ = pdf.AddTTFFont("cjk", cjkFont)
 
-	const html = `
+	html := `
 <style>
 	h1 { font-size: 22pt; text-align: center; color: #1a3c6e; }
 	h2 { font-size: 15pt; color: #2c5f8a; }
@@ -70,17 +84,36 @@ multiple visual lines of output in this demonstration document.</p>
 <h2>Mathematics</h2>
 <p>The famous identity: <b>E = mc<sup>2</sup></b> and the Gaussian integral
 appear in the formula section below, followed by Greek letters and operators.</p>
+<h2>Block Background</h2>
+<div style="background-color: #e8f0ff; padding-bottom: 6pt">A block-level
+background draws a full-width band behind every line — this text sits on a
+light shade that wraps across lines, supports pagination, and never covers
+the glyphs themselves.</div>
+<p style="text-align: justify">Justified filler paragraph number one to push
+subsequent tables past the page boundary while keeping every rendered line
+aligned on both margins for the demonstration.</p>
+<table border="1" width="100%">
+	<thead><tr><th>ID</th><th>Description</th></tr></thead>
+	<tbody>
+		<tr><td rowspan="4">Span A</td><td>row a-1</td></tr>
+		<tr><td>row a-2</td></tr>
+		<tr><td>row a-3</td></tr>
+		<tr><td>row a-4</td></tr>` +
+		fillRows() + `
+	</tbody>
+</table>
 <h2 style="font-family: cjk">中文排版</h2>
 <p style="font-family: cjk">中文文本在没有空格的情况下也能正确换行，而且标点符号不会出现在行首，
 这是排版引擎遵循避头尾规则的效果。长文本会自动换行并保持可读性。</p>
 `
 
 	_, err := pdf.InsertHTMLPaginated(50, 60, 495, html, gopdf.HTMLBoxOption{
-		DefaultFontFamily: "lib",
-		DefaultFontSize:   11,
-		BoldFontFamily:    "libbold",
-		PageTop:           50,
-		PageBottom:        792 - 50,
+		DefaultFontFamily:  "lib",
+		DefaultFontSize:    11,
+		BoldFontFamily:     "libbold",
+		PageTop:            50,
+		PageBottom:         792 - 50,
+		RepeatTableHeaders: true,
 	})
 	if err != nil {
 		log.Fatal(err)

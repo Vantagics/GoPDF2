@@ -180,6 +180,10 @@ func (gp *GoPdf) InsertHTMLPaginated(x, y, w float64, htmlStr string, opt HTMLBo
 
 **中文换行：** CJK 文本按字符断行并遵循避头尾规则（行首不出现标点、行尾不出现开括号）。
 
+**块级背景：** 块级元素的 `background-color` 为每一行绘制整宽色带（正确的层级顺序、分页安全）。
+
+**表格分页：** `InsertHTMLPaginated` 以行组为单位断页——由 rowspan 连接的行不会分散到两个页面（超尺寸组回退为行级断页）；设置 `RepeatTableHeaders` 后每个续页重复 `<thead>` 表头。
+
 **颜色格式：** `#RGB`、`#RRGGBB`、`rgb(r,g,b)`、`rgba(r,g,b,a)`（alpha 忽略）、CSS 命名颜色
 
 **字号格式：** `12pt`、`16px`、`1.5em`、`150%`、命名尺寸（small、medium、large 等）
