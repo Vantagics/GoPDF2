@@ -713,6 +713,26 @@ func isFormXObject(dict string) bool {
 	return strings.Contains(dict, "/Subtype /Form") || strings.Contains(dict, "/Subtype/Form")
 }
 
+// cachedFormFonts resolves a form's fonts once per parser instance.
+func cachedFormFonts(parser *rawPDFParser, objNum int, dict string) map[string]*fontInfo {
+	if m, ok := parser.fontCache[objNum]; ok {
+		return m
+	}
+	m := buildFontMapFromDict(parser, dict)
+	parser.fontCache[objNum] = m
+	return m
+}
+
+// cachedFormXObjects resolves a form's nested XObjects once per instance.
+func cachedFormXObjects(parser *rawPDFParser, objNum int, dict string) map[string]int {
+	if m, ok := parser.xobjCache[objNum]; ok {
+		return m
+	}
+	m := buildXObjMapFromDict(parser, dict)
+	parser.xobjCache[objNum] = m
+	return m
+}
+
 // buildFontMapFromDict builds the font map for resources referenced by an
 // arbitrary dict (e.g. a Form XObject), mirroring the page-level logic.
 func buildFontMapFromDict(parser *rawPDFParser, dict string) map[string]*fontInfo {
@@ -988,22 +1008,31 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 			if !found || obj.stream == nil || !isFormXObject(obj.dict) {
 				continue
 			}
-			subVisited := make(map[int]bool, len(ctx.visited)+1)
-			for k, v := range ctx.visited {
-				subVisited[k] = v
+			baseRuns, ok := ctx.parser.formTextCache[objNum]
+			if !ok {
+				subVisited := make(map[int]bool, len(ctx.visited)+1)
+				for k, v := range ctx.visited {
+					subVisited[k] = v
+				}
+				subVisited[objNum] = true
+				sub := &extractionContext{
+					parser:   ctx.parser,
+					fonts:    cachedFormFonts(ctx.parser, objNum, obj.dict),
+					xobjs:    cachedFormXObjects(ctx.parser, objNum, obj.dict),
+					mediaBox: ctx.mediaBox,
+					visited:  subVisited,
+				}
+				baseRuns = parseTextOperatorsCtx(sub, obj.stream)
+				ctx.parser.formTextCache[objNum] = baseRuns
 			}
-			subVisited[objNum] = true
-			sub := &extractionContext{
-				parser:   ctx.parser,
-				fonts:    buildFontMapFromDict(ctx.parser, obj.dict),
-				xobjs:    buildXObjMapFromDict(ctx.parser, obj.dict),
-				mediaBox: ctx.mediaBox,
-				offX:     ctx.offX + ctmE,
-				offY:     ctx.offY + ctmF,
-				depth:    ctx.depth + 1,
-				visited:  subVisited,
+			// translate the cached un-offset runs by the cumulative Do offset
+			offX := ctx.offX + ctmE
+			offY := ctx.offY + ctmF
+			for _, r := range baseRuns {
+				r.X += offX
+				r.Y -= offY
+				results = append(results, r)
 			}
-			results = append(results, parseTextOperatorsCtx(sub, obj.stream)...)
 		}
 	}
 	return results

@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Raw parser is now the primary extraction backend (ledongthuc/pdf remains as
   fallback); ligature-aware ToUnicode maps (multi-rune bfchar destinations)
+- Text inside **Form XObjects** is extracted — page content embedded in
+  `/Subtype /Form` objects (stamps, letterheads, running headers) recursed
+  with Do translation offsets and per-form fonts/resources
+  (TAMReview.pdf: 2 pages/3.2k chars -> 23 pages/13.4k chars)
 - PDF 2.0 UTF-8 text strings (EF BB BF BOM) decode like UTF-16BE
 - `<script>`/`<style>` parse as raw text — markup inside scripts no longer
   corrupts the element tree

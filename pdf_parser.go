@@ -30,6 +30,13 @@ type rawPDFParser struct {
 	objects map[int]rawPDFObject // objNum -> object
 	pages   []rawPDFPage
 	root    int // root catalog obj number
+
+	// form caches (per parser instance = per extraction call): form streams
+	// recur on every page (stamps, watermarks) — fonts, nested XObjects and
+	// the un-offset runs are parsed once and translated on reuse
+	fontCache     map[int]map[string]*fontInfo
+	xobjCache     map[int]map[string]int
+	formTextCache map[int][]ExtractedText
 }
 
 // rawPDFObject holds a parsed PDF object.
@@ -56,8 +63,11 @@ type rawPDFResources struct {
 // newRawPDFParser creates a parser for the given PDF data.
 func newRawPDFParser(data []byte) (*rawPDFParser, error) {
 	p := &rawPDFParser{
-		data:    data,
-		objects: make(map[int]rawPDFObject),
+		data:          data,
+		objects:       make(map[int]rawPDFObject),
+		fontCache:     make(map[int]map[string]*fontInfo),
+		xobjCache:     make(map[int]map[string]int),
+		formTextCache: make(map[int][]ExtractedText),
 	}
 	if err := p.parse(); err != nil {
 		return nil, fmt.Errorf("pdf parse: %w", err)
