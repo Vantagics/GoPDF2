@@ -135,8 +135,8 @@ type GoPdf struct {
 
 // formFieldRef stores a form field and its object index.
 type formFieldRef struct {
-	field   FormField
-	objIdx  int // index in pdfObjs
+	field  FormField
+	objIdx int // index in pdfObjs
 }
 
 type DrawableRectOptions struct {
@@ -1387,10 +1387,37 @@ func (gp *GoPdf) SplitTextWithOption(text string, width float64, opt *BreakOptio
 	}
 	// possible (not conflicting) position of the separator within the currently processed line
 	separatorIdx := 0
-	for i := 0; i < utf8TextsLen; i++ {
-		lineWidth, err := gp.MeasureTextWidth(string(lineText))
+
+	// Fast path: without kerning a line's width is the exact sum of the
+	// per-rune widths (createContent adds charSpacing per rune, so a running
+	// total reproduces the full-string measurement). This removes the
+	// per-character re-measure of the whole line (O(n^2) -> O(n)).
+	fastWidth := false
+	if !gp.curr.FontISubset.GetTtfFontOption().UseKerning {
+		fastWidth = true
+	}
+	var lineW float64 // running line width (fast path only)
+	// resyncWidth recomputes the running width after a break mutated lineText.
+	resyncWidth := func() {
+		if !fastWidth {
+			return
+		}
+		after, err := gp.MeasureTextWidth(string(lineText))
 		if err != nil {
-			return nil, err
+			lineW = 0
+			return
+		}
+		lineW = after
+	}
+	for i := 0; i < utf8TextsLen; i++ {
+		var lineWidth float64
+		if fastWidth {
+			lineWidth = lineW
+		} else {
+			lineWidth, err = gp.MeasureTextWidth(string(lineText))
+			if err != nil {
+				return nil, err
+			}
 		}
 		runeWidth, err := gp.MeasureTextWidth(string(utf8Texts[i]))
 		if err != nil {
@@ -1408,12 +1435,14 @@ func (gp *GoPdf) SplitTextWithOption(text string, width float64, opt *BreakOptio
 			if opt.Mode == BreakModeStrict || forceBreak {
 				performStrictLineBreak(&lineTexts, &lineText, &i, separatorIdx, opt)
 			}
+			resyncWidth()
 			continue
 		}
 		// regular break due to a new line rune
 		if utf8Texts[i] == '\n' {
 			lineTexts = append(lineTexts, string(lineText))
 			lineText = lineText[0:0]
+			lineW = 0
 			continue
 		}
 		// end of text
@@ -1426,6 +1455,7 @@ func (gp *GoPdf) SplitTextWithOption(text string, width float64, opt *BreakOptio
 			separatorIdx = i
 		}
 		lineText = append(lineText, utf8Texts[i])
+		lineW += runeWidth
 	}
 	return lineTexts, nil
 }
