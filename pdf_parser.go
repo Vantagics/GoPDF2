@@ -65,11 +65,11 @@ type rawPDFResources struct {
 // newRawPDFParser creates a parser for the given PDF data.
 func newRawPDFParser(data []byte) (*rawPDFParser, error) {
 	p := &rawPDFParser{
-		data:          data,
-		objects:       make(map[int]rawPDFObject),
-		fontCache:     make(map[int]map[string]*fontInfo),
-		xobjCache:     make(map[int]map[string]int),
-		formRuns:      make(map[int]map[float64][]ExtractedText),
+		data:      data,
+		objects:   make(map[int]rawPDFObject),
+		fontCache: make(map[int]map[string]*fontInfo),
+		xobjCache: make(map[int]map[string]int),
+		formRuns:  make(map[int]map[float64][]ExtractedText),
 	}
 	if err := p.parse(); err != nil {
 		return nil, fmt.Errorf("pdf parse: %w", err)

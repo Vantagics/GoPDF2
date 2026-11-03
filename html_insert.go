@@ -152,10 +152,11 @@ type htmlTableRow struct {
 //   - <style>: CSS stylesheet (tag / .class / #id selectors)
 //
 // Supported CSS properties (inline style and <style> blocks):
-//   color, background-color, font-size, font-family, font-weight, font-style,
-//   text-decoration, text-align (incl. justify), text-transform, text-indent,
-//   line-height, letter-spacing, vertical-align, width (tables/cells/imgs),
-//   margin-top, margin-bottom, white-space.
+//
+//	color, background-color, font-size, font-family, font-weight, font-style,
+//	text-decoration, text-align (incl. justify), text-transform, text-indent,
+//	line-height, letter-spacing, vertical-align, width (tables/cells/imgs),
+//	margin-top, margin-bottom, white-space.
 //
 // Parameters:
 //   - x, y: Top-left corner of the box (in document units)
