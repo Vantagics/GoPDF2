@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rowspan rows no longer orphaned across page breaks**: pages break between
   row groups (rows joined by a rowspan cell stay together); groups taller
   than a whole page fall back to row-level breaking
+- **IncrementalSave rewritten to spec**: the update now chains /Prev to the
+  original xref and covers the full object numbering (the previous output
+  lacked /Prev and pointed /Root at an unreachable catalog — poppler
+  reported a broken catalog); nil-outlines panic on non-Started instances
+  fixed; ComparePDF and ValidatePDFA verified working via tests
+- Removed the false "Linearization (web optimization)" claim (no such
+  implementation exists)
 - Default `<p>` spacing restored (paragraphs without CSS collapsed to a bare
   line-height gap)
 - **Data race** in the cached CJK decoders (lazy map write) — immutable
@@ -138,7 +145,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Page labels, page layout, page mode
 - Incremental save for fast updates on large documents
 - Document cloning, scrubbing, garbage collection
-- Linearization (web optimization)
 - Content stream cleaning
 - Colorspace conversion
 - PDF/A validation (1a, 1b, 2a, 2b)

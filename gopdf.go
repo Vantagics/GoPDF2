@@ -2381,7 +2381,7 @@ func (gp *GoPdf) prepare() {
 		gp.addObj(encObj)
 	}
 
-	if gp.outlines.Count() > 0 {
+	if gp.outlines != nil && gp.outlines.Count() > 0 {
 		catalogObj := gp.pdfObjs[gp.indexOfCatalogObj].(*CatalogObj)
 		catalogObj.SetIndexObjOutlines(gp.indexOfOutlinesObj)
 	}
