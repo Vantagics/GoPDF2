@@ -1042,7 +1042,7 @@ func GroupIntoTextLines(runs []ExtractedText) []TextLine
 - `ExtractAllPagesLines` — 解析一次 PDF 并返回每一页的合并行（优先于循环调用 `ExtractPageLines`）。
 - `MergeTextRuns` / `GroupIntoTextLines` — 底层的位置感知合并函数。
 
-提取管线支持对象流（PDF 1.5+）、**Form XObject**（`/Subtype /Form` 型印章/信头中的嵌套文本会被提取）、预定义 CMap、/Differences 字形名、WinAnsi/MacRoman/PDFDoc 编码、传统 GBK/Big5/Shift-JIS/EUC 编码、/Widths 与 CID /W 字形宽度、TJ 字距空格、以及 PDF 2.0 的 UTF-16BE/UTF-8 文本字符串。
+提取管线支持对象流（PDF 1.5+）、**加密文档**（`ExtractTextFromPageWithPassword` / `ExtractTextFromAllPagesWithPassword`；RC4 R2/R3 与 AES-128/256 R4/R6）、**Form XObject**（`/Subtype /Form` 型印章/信头中的嵌套文本会被提取）、预定义 CMap、/Differences 字形名、WinAnsi/MacRoman/PDFDoc 编码、传统 GBK/Big5/Shift-JIS/EUC 编码、/Widths 与 CID /W 字形宽度、TJ 字距空格、以及 PDF 2.0 的 UTF-16BE/UTF-8 文本字符串。
 
 ### ExtractedText
 

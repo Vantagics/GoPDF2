@@ -1047,7 +1047,7 @@ Extract text content from existing PDF files. These are package-level functions 
 - `ExtractAllPagesLines` — parses the PDF once and returns merged lines for every page (prefer over looping `ExtractPageLines`).
 - `MergeTextRuns` / `GroupIntoTextLines` — the underlying position-aware merging helpers.
 
-The extraction pipeline supports object streams (PDF 1.5+), **Form XObjects** (text nested in /Subtype /Form stamps/letterheads is extracted), predefined CMaps, /Differences glyph names, WinAnsi/MacRoman/PDFDoc encodings, legacy GBK/Big5/Shift-JIS/EUC encodings, glyph advances from /Widths and CID /W arrays, TJ kerning spaces, and PDF 2.0 UTF-16BE/UTF-8 text strings.
+The extraction pipeline supports object streams (PDF 1.5+), **encrypted documents** (`ExtractTextFromPageWithPassword` / `ExtractTextFromAllPagesWithPassword`; RC4 R2/R3 and AES-128/256 R4/R6), **Form XObjects** (text nested in /Subtype /Form stamps/letterheads is extracted), predefined CMaps, /Differences glyph names, WinAnsi/MacRoman/PDFDoc encodings, legacy GBK/Big5/Shift-JIS/EUC encodings, glyph advances from /Widths and CID /W arrays, TJ kerning spaces, and PDF 2.0 UTF-16BE/UTF-8 text strings.
 
 ### ExtractedText
 

@@ -253,3 +253,55 @@ func ExtractAllPagesLines(pdfData []byte) (map[int][]TextLine, error) {
 	}
 	return out, nil
 }
+
+// ExtractTextFromPageWithPassword extracts text from an encrypted PDF page
+// using the given user or owner password.
+func ExtractTextFromPageWithPassword(pdfData []byte, pageIndex int, password string) ([]ExtractedText, error) {
+	dc, err := authenticate(pdfData, password)
+	if err != nil {
+		return nil, err
+	}
+	if dc == nil {
+		// not encrypted — plain path
+		return ExtractTextFromPage(pdfData, pageIndex)
+	}
+	decrypted := decryptPDF(pdfData, dc)
+	return ExtractTextFromPage(decrypted, pageIndex)
+}
+
+// ExtractTextFromAllPagesWithPassword extracts text from an encrypted PDF
+// using the given user or owner password. Non-encrypted input takes the
+// plain path automatically.
+func ExtractTextFromAllPagesWithPassword(pdfData []byte, password string) (map[int][]ExtractedText, error) {
+	dc, err := authenticate(pdfData, password)
+	if err != nil {
+		return nil, err
+	}
+	if dc == nil {
+		return ExtractTextFromAllPages(pdfData)
+	}
+	decrypted := decryptPDF(pdfData, dc)
+	return ExtractTextFromAllPages(decrypted)
+}
+
+// ExtractPageTextWithPassword extracts a page as plain text from an
+// encrypted PDF using the given password.
+func ExtractPageTextWithPassword(pdfData []byte, pageIndex int, password string) (string, error) {
+	lines, err := ExtractTextFromPageWithPassword(pdfData, pageIndex, password)
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	lastY := 0.0
+	first := true
+	for _, ln := range GroupIntoTextLines(lines) {
+		if !first {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(ln.Text)
+		lastY = ln.Y
+		first = false
+	}
+	_ = lastY
+	return sb.String(), nil
+}

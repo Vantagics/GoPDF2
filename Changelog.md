@@ -88,6 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WatermarkOption` gains `AngleSet`/`ColorSet`/`OpacitySet` flags — a
   horizontal (0°), black, or fully transparent watermark can now be requested
   explicitly (plain 0 values still select the historical defaults)
+- **AES encryption made functional end-to-end**: `SetEncryption` previously
+  wrote an /Encrypt dictionary without encrypting any stream and without
+  referencing it from the trailer — output files were readable without a
+  password. Streams are now encrypted per object (AES-CBC with random IV,
+  R4/R6 key derivation), the trailer references /Encrypt, and password-aware
+  text extraction is available via
+  `ExtractTextFromPageWithPassword` / `ExtractTextFromAllPagesWithPassword`
+  (the built-in decryptor also gained AES-128/256 R4/R6 support)
 - tokenizer no longer hangs on stray `)`/`>`; CMap bfrange 0xFFFF overflow
 
 ### Performance (review rounds)

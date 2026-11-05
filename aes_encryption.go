@@ -327,6 +327,7 @@ func (gp *GoPdf) setupAES256(config AESEncryptionConfig) error {
 		fileKey: fileKey,
 	}
 
+	gp.aesEnc = encObj
 	gp.encryptionObjID = gp.addObj(encObj) + 1
 	return nil
 }
@@ -362,6 +363,39 @@ func aesEncryptCBCZeroIV(key, plaintext []byte) ([]byte, error) {
 	mode := cipher.NewCBCEncrypter(block, iv)
 	mode.CryptBlocks(ciphertext, padded)
 	return ciphertext, nil
+}
+
+// aesDecryptCBCZeroIV decrypts AES-CBC data encrypted with a zero IV
+// (the UE/OE convention), removing PKCS7 padding.
+func aesDecryptCBCZeroIV(key, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(ciphertext) == 0 || len(ciphertext)%block.BlockSize() != 0 {
+		return nil, fmt.Errorf("invalid ciphertext length")
+	}
+	iv := make([]byte, block.BlockSize())
+	plaintext := make([]byte, len(ciphertext))
+	mode := cipher.NewCBCDecrypter(block, iv)
+	mode.CryptBlocks(plaintext, ciphertext)
+
+	if len(plaintext) > 0 {
+		padLen := int(plaintext[len(plaintext)-1])
+		if padLen > 0 && padLen <= block.BlockSize() && padLen <= len(plaintext) {
+			valid := true
+			for i := len(plaintext) - padLen; i < len(plaintext); i++ {
+				if plaintext[i] != byte(padLen) {
+					valid = false
+					break
+				}
+			}
+			if valid {
+				plaintext = plaintext[:len(plaintext)-padLen]
+			}
+		}
+	}
+	return plaintext, nil
 }
 
 // aesEncryptCBCWithIV encrypts data using AES-CBC with PKCS7 padding.
@@ -499,4 +533,40 @@ func (c *rc4Cipher) XORKeyStream(dst, src []byte) {
 		c.s[c.i], c.s[c.j] = c.s[c.j], c.s[c.i]
 		dst[k] = src[k] ^ c.s[c.s[c.i]+c.s[c.j]]
 	}
+}
+
+// encryptObjectStream encrypts one object's stream bytes per the active
+// AES method: a per-object key is derived and the output is AES-CBC with a
+// random IV prepended (per spec, the IV is stored before the data).
+func (e *aesEncryptionObj) encryptObjectStream(objID int, data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return data, nil
+	}
+	var objKey []byte
+	switch e.method {
+	case EncryptAES256:
+		// R=6: key = SHA-256(fileKey || objnum_le32 || gennum_le32), gen = 0
+		input := make([]byte, 0, len(e.fileKey)+8)
+		input = append(input, e.fileKey...)
+		input = append(input, byte(objID), byte(objID>>8), byte(objID>>16), byte(objID>>24), 0, 0, 0, 0)
+		h := sha256.Sum256(input)
+		objKey = h[:e.keyLen]
+	case EncryptAES128:
+		// R=4: key = MD5(fileKey || objnum_le32(3) || gen_le32(2) || "sAlT")
+		input := make([]byte, 0, len(e.fileKey)+5+4)
+		input = append(input, e.fileKey...)
+		input = append(input, byte(objID), byte(objID>>8), byte(objID>>16), 0, 0, 0, 's', 'A', 'l', 'T')
+		h := md5.Sum(input)
+		keyLen := e.keyLen
+		if keyLen > 16 {
+			keyLen = 16
+		}
+		if keyLen > len(h) {
+			keyLen = len(h)
+		}
+		objKey = h[:keyLen]
+	default:
+		return data, nil
+	}
+	return aesEncryptCBCWithIV(objKey, data, nil)
 }
