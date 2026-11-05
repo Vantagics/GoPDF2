@@ -85,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - table segment borders use each segment's actual header height
 - a { text-decoration: none } is honored; `rgba()` colors parse;
   `line-height` percentages parse; `*.class` selectors work
+- `WatermarkOption` gains `AngleSet`/`ColorSet`/`OpacitySet` flags — a
+  horizontal (0°), black, or fully transparent watermark can now be requested
+  explicitly (plain 0 values still select the historical defaults)
 - tokenizer no longer hangs on stray `)`/`>`; CMap bfrange 0xFFFF overflow
 
 ### Performance (review rounds)
