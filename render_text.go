@@ -92,7 +92,6 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 		return
 	}
 	scale := fontSize / float64(font.ttf.unitsPerEm)
-	println("[draw] pen", penX, penY, "scale", scale, "codes", len(codes))
 
 	for i := 0; i < len(codes); i += font.codeSize {
 		var gid uint16

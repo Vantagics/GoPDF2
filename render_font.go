@@ -342,7 +342,6 @@ type glyphPt struct {
 // parseSimpleGlyf decodes the point stream of a simple glyph.
 func (m *minTTF) parseSimpleGlyf(g []byte, numberOfContours int) ([][]glyphPt, error) {
 	if numberOfContours <= 0 || len(g) < 10 {
-		println("[glyf] fail: nc/len guard", numberOfContours, len(g))
 		return nil, nil
 	}
 	endPts := make([]int, numberOfContours)
@@ -360,12 +359,10 @@ func (m *minTTF) parseSimpleGlyf(g []byte, numberOfContours int) ([][]glyphPt, e
 
 	// flags
 	flags := make([]byte, numPoints)
-	println("[glyf] numPoints", numPoints, "pos", pos, "len", len(g), "instrLen", instrLen)
 	print("[glyf] raw g[189:195]:")
 	for i := 189; i < 195 && i < len(g); i++ {
 		print(" ", g[i])
 	}
-	println("")
 	for i := 0; i < numPoints && pos < len(g); {
 		f := g[pos]
 		pos++
@@ -413,7 +410,6 @@ func (m *minTTF) parseSimpleGlyf(g []byte, numberOfContours int) ([][]glyphPt, e
 		f := flags[i]
 		if f&0x04 != 0 {
 			if pos >= len(g) {
-				println("[glyf] y short overrun", i, pos)
 				return nil, nil
 			}
 			d := int(g[pos])
