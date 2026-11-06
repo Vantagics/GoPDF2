@@ -221,7 +221,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 						}
 						penX := ts.tmX + kern
 						penY := pageH - ts.tmY
-						drawTextRun(img, ts.font, run, ts.fontSize, penX*scale, penY*scale, ts.fill)
+						drawTextRun(img, ts.font, run, ts.fontSize, penX*scale, penY*scale, ts.fill, ts.charSpacing*scale, ts.wordSpacing*scale)
 						run = run[:0]
 					}
 					for _, item := range tokens[start+1 : i] {

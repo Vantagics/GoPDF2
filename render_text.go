@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"sort"
 	"strings"
 )
 
@@ -24,13 +25,15 @@ type renderFont struct {
 
 // renderTextState tracks the PDF text state while rendering.
 type renderTextState struct {
-	font     *renderFont
-	fontSize float64
-	tmX, tmY float64 // text matrix position (PDF space, y-up)
-	tlmX     float64
-	tlmY     float64
-	leading  float64
-	fill     color.RGBA
+	font        *renderFont
+	fontSize    float64
+	tmX, tmY    float64 // text matrix position (PDF space, y-up)
+	tlmX        float64
+	tlmY        float64
+	leading     float64
+	fill        color.RGBA
+	charSpacing float64 // Tc: extra spacing per glyph
+	wordSpacing float64 // Tw: extra spacing per space char
 }
 
 // resolveRenderFonts builds resource-name -> parsed embedded font mappings
@@ -87,7 +90,7 @@ func resolveRenderFonts(parser *rawPDFParser, page rawPDFPage) map[string]*rende
 
 // drawTextRun rasterizes one text run at the given pen position (device
 // pixels), filling glyph outlines with the fill color.
-func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float64, penX, penY float64, fill color.RGBA) {
+func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float64, penX, penY float64, fill color.RGBA, csPx, wsPx float64) {
 	if font == nil || font.ttf == nil || len(codes) == 0 {
 		return
 	}
@@ -95,11 +98,13 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 
 	for i := 0; i < len(codes); i += font.codeSize {
 		var gid uint16
+		var isSpace bool
 		if font.codeSize == 2 && i+1 < len(codes) {
-			// Identity-H: the 2-byte code IS the glyph id
 			gid = uint16(codes[i])<<8 | uint16(codes[i+1])
+			isSpace = gid == 3 // common space GID in Identity-H subsets
 		} else {
 			gid = font.ttf.charToGlyph(int(codes[i]))
+			isSpace = codes[i] == 32
 		}
 		if gid == 0 {
 			continue
@@ -107,11 +112,17 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 		contours, err := font.ttf.glyphOutline(gid, 0)
 		if err != nil || len(contours) == 0 {
 			penX += font.ttf.glyphWidth(gid) * scale
+			if isSpace {
+				penX += wsPx
+			}
 			continue
 		}
 		// glyph origin at pen, y flipped (font y-up -> image y-down)
 		drawGlyphContours(img, contours, scale, penX, penY, fill)
-		penX += font.ttf.glyphWidth(gid) * scale
+		penX += font.ttf.glyphWidth(gid)*scale + csPx
+		if isSpace {
+			penX += wsPx
+		}
 	}
 }
 
@@ -224,7 +235,7 @@ func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA)
 				xs = append(xs, x)
 			}
 		}
-		sortFloats(xs)
+		sort.Float64s(xs)
 		for i := 0; i+1 < len(xs); i += 2 {
 			x0 := int(xs[i] + 0.5)
 			x1 := int(xs[i+1] + 0.5)
@@ -239,14 +250,6 @@ func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA)
 					img.SetRGBA(x, y, fill)
 				}
 			}
-		}
-	}
-}
-
-func sortFloats(xs []float64) {
-	for i := 1; i < len(xs); i++ {
-		for j := i; j > 0 && xs[j] < xs[j-1]; j-- {
-			xs[j], xs[j-1] = xs[j-1], xs[j]
 		}
 	}
 }
@@ -267,7 +270,7 @@ func renderDrawText(img *image.RGBA, ts *renderTextState, rawToken []byte, pageH
 	}
 	penX := ts.tmX
 	penY := pageH - ts.tmY
-	drawTextRun(img, ts.font, data, ts.fontSize, penX*scale, penY*scale, ts.fill)
+	drawTextRun(img, ts.font, data, ts.fontSize, penX*scale, penY*scale, ts.fill, ts.charSpacing*scale, ts.wordSpacing*scale)
 }
 
 // renderTf handles the Tf operator: select a font resource and size.
