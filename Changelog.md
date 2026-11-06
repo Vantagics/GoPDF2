@@ -95,6 +95,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WatermarkOption` gains `AngleSet`/`ColorSet`/`OpacitySet` flags — a
   horizontal (0°), black, or fully transparent watermark can now be requested
   explicitly (plain 0 values still select the historical defaults)
+- **RenderPageToImage now draws text glyphs**: embedded TrueType fonts
+  (FontFile2) are parsed with a minimal tolerant reader (head/maxp/loca/
+  glyf/cmap/hmtx), glyph outlines (simple + composite) are rasterized with
+  an even-odd scanline fill; the content-stream text state machine handles
+  BT/ET/Tf/Td/TD/Tm/T*/quote/Tj/TJ (with per-segment kern displacement)/rg/g;
+  Form XObject text is rendered recursively
 - **AES encryption made functional end-to-end**: `SetEncryption` previously
   wrote an /Encrypt dictionary without encrypting any stream and without
   referencing it from the trailer — output files were readable without a

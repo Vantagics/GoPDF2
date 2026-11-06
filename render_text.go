@@ -92,6 +92,7 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 		return
 	}
 	scale := fontSize / float64(font.ttf.unitsPerEm)
+	println("[draw] pen", penX, penY, "scale", scale, "codes", len(codes))
 
 	for i := 0; i < len(codes); i += font.codeSize {
 		var gid uint16
@@ -320,3 +321,26 @@ func firstRefInArray(dict, key string) int {
 }
 
 // helper re-exported for the probe above
+
+// pageFontsWithForm merges a form's own /Font resources with the page-level
+// ones so text inside the form resolves its font correctly.
+func pageFontsWithForm(parser *rawPDFParser, pageFonts map[string]int, formDict string) map[string]int {
+	merged := make(map[string]int, len(pageFonts)+4)
+	for n, o := range pageFonts {
+		merged[n] = o
+	}
+	resDict := formDict
+	if resRef := extractRef(formDict, "/Resources"); resRef > 0 {
+		if obj, ok := parser.objects[resRef]; ok {
+			resDict = obj.dict
+		}
+	}
+	formFonts := make(map[string]int)
+	parser.extractNamedRefs(resDict, "/Font", formFonts)
+	for n, o := range formFonts {
+		if _, clash := merged[n]; !clash {
+			merged[n] = o
+		}
+	}
+	return merged
+}

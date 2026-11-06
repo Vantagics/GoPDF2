@@ -178,6 +178,31 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				ts.tlmX, ts.tlmY = ts.tmX, ts.tmY
 				stack = stack[:len(stack)-6]
 			}
+		case "T*":
+			// next text line at the current leading
+			if inText {
+				ts.tlmY -= ts.leading
+				ts.tmX, ts.tmY = ts.tlmX, ts.tlmY
+			}
+		case "'":
+			// next line + show
+			if inText {
+				ts.tlmY -= ts.leading
+				ts.tmX, ts.tmY = ts.tlmX, ts.tlmY
+				raw := renderTextOpBytes(tokens, i)
+				renderDrawText(img, ts, raw, pageH, scale, fontResources)
+			}
+		case "\"":
+			// set word/char spacing, next line + show
+			if inText && len(stack) >= 3 {
+				stack = stack[:len(stack)-3]
+			}
+			if inText {
+				ts.tlmY -= ts.leading
+				ts.tmX, ts.tmY = ts.tlmX, ts.tlmY
+				raw := renderTextOpBytes(tokens, i)
+				renderDrawText(img, ts, raw, pageH, scale, fontResources)
+			}
 		case "Tj":
 			if inText {
 				raw := renderTextOpBytes(tokens, i)
@@ -187,6 +212,16 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			if inText {
 				if start := findArrayStart(tokens, i); start >= 0 {
 					var run []byte
+					kern := 0.0
+					flushRun := func() {
+						if len(run) == 0 {
+							return
+						}
+						penX := ts.tmX + kern
+						penY := pageH - ts.tmY
+						drawTextRun(img, ts.font, run, ts.fontSize, penX*scale, penY*scale, ts.fill)
+						run = run[:0]
+					}
 					for _, item := range tokens[start+1 : i] {
 						if isStringToken(item) {
 							// strip the <...> or (...) delimiters
@@ -199,9 +234,14 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 							} else {
 								run = append(run, []byte(unescapePDFString(string(inner)))...)
 							}
+						} else if v, err := strconv.ParseFloat(string(item), 64); err == nil {
+							// flush before the displacement so the next string
+							// starts at the shifted position
+							flushRun()
+							kern += -v / 1000.0 * ts.fontSize
 						}
 					}
-					renderDrawText(img, ts, run, pageH, scale, fontResources)
+					flushRun()
 				}
 			}
 		case "cm":
@@ -378,6 +418,16 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 	}
 	obj, ok := parser.objects[objNum]
 	if !ok {
+		return
+	}
+	// Form XObjects may carry more text/graphics — render their stream
+	// recursively with the form's own font resources merged in.
+	if strings.Contains(obj.dict, "/Subtype /Form") || strings.Contains(obj.dict, "/Subtype/Form") {
+		if obj.stream != nil {
+			subPage := page
+			subPage.resources.fonts = pageFontsWithForm(parser, page.resources.fonts, obj.dict)
+			renderContentStream(img, obj.stream, parser, subPage, scale, pageH)
+		}
 		return
 	}
 	if !strings.Contains(obj.dict, "/Subtype /Image") &&
