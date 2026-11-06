@@ -127,13 +127,19 @@ func (e *aesEncryptionObj) write(w io.Writer, objID int) error {
 func (gp *GoPdf) SetEncryption(config AESEncryptionConfig) error {
 	switch config.Method {
 	case EncryptRC4V1, EncryptRC4V2:
-		// Delegate to existing RC4 protection.
+		// Delegate to existing RC4 protection and mark the config so
+		// prepare() and the trailer writer include the /Encrypt reference.
 		perms := config.Permissions
 		if perms == 0 {
 			perms = PermissionsPrint
 		}
-		p := gp.createProtection()
-		return p.SetProtection(perms, []byte(config.UserPassword), []byte(config.OwnerPassword))
+		gp.pdfProtection = new(PDFProtection)
+		gp.pdfProtection.setProtection(perms, []byte(config.UserPassword), []byte(config.OwnerPassword))
+		gp.config.Protection.UseProtection = true
+		gp.config.Protection.Permissions = perms
+		gp.config.Protection.UserPass = []byte(config.UserPassword)
+		gp.config.Protection.OwnerPass = []byte(config.OwnerPassword)
+		return nil
 
 	case EncryptAES128:
 		return gp.setupAES128(config)

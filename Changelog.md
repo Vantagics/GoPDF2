@@ -113,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text extraction is available via
   `ExtractTextFromPageWithPassword` / `ExtractTextFromAllPagesWithPassword`
   (the built-in decryptor also gained AES-128/256 R4/R6 support)
+- **RC4 `SetEncryption` trailer fix**: `SetEncryption` with RC4 methods
+  now correctly sets the UseProtection flag so the trailer includes
+  /Encrypt and /ID (previously the /Encrypt reference was silently
+  omitted, making RC4-encrypted files readable without a password when
+  using `SetEncryption` instead of `Config.Protection`)
+- **OpenPDF password support extended to AES**: `OpenPDFOption.Password`
+  now works with AES-128/256 encrypted PDFs in addition to RC4
 - tokenizer no longer hangs on stray `)`/`>`; CMap bfrange 0xFFFF overflow
 
 ### Performance (review rounds)
