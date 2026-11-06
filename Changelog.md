@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GBK Chinese, Arabic CID fonts and ObjStm-based forms
 - File-path convenience wrappers: `ExtractTextFromFile`,
   `ExtractPageLinesFromFile`, `RenderPageToFile`
+- Benchmark suite for regression tracking (text/HTML/table/formula creation,
+  extraction, SplitText, BuffWrite, font container)
 - `cmd/pdfprobe` and `cmd/pdfrender` diagnostic tools, `cmd/htmldemo` showcase
 
 ### Changed
