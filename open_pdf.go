@@ -20,7 +20,7 @@ type OpenPDFOption struct {
 
 	// Password is the user or owner password for opening encrypted PDFs.
 	// If the PDF is encrypted and no password is provided, OpenPDF returns
-	// ErrEncryptedPDF. Supports RC4 (V1/V2, R2/R3) and AES-128/256 (R4/R6).
+	// ErrEncryptedPDF. Supports RC4 (V1/V2, R2/R3) for OpenPDF modification; AES extraction via WithPassword APIs.
 	Password string
 }
 
