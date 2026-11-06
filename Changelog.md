@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corpus-based extraction test suite (test/corpus, auto-skipped when absent)
   covering ISO 32000-2 samples, an arXiv paper, a 55-page formula booklet,
   GBK Chinese, Arabic CID fonts and ObjStm-based forms
+- File-path convenience wrappers: `ExtractTextFromFile`,
+  `ExtractPageLinesFromFile`, `RenderPageToFile`
 - `cmd/pdfprobe` and `cmd/pdfrender` diagnostic tools, `cmd/htmldemo` showcase
 
 ### Changed

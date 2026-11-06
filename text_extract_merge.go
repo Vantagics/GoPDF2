@@ -2,6 +2,7 @@ package gopdf
 
 import (
 	"math"
+	"os"
 	"sort"
 	"strings"
 )
@@ -304,4 +305,23 @@ func ExtractPageTextWithPassword(pdfData []byte, pageIndex int, password string)
 	}
 	_ = lastY
 	return sb.String(), nil
+}
+
+// ExtractTextFromFile extracts text from a PDF file on disk.
+// Convenience wrapper that reads the file and calls ExtractTextFromAllPages.
+func ExtractTextFromFile(path string) (map[int][]ExtractedText, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return ExtractTextFromAllPages(data)
+}
+
+// ExtractPageLinesFromFile extracts merged text lines from a PDF file.
+func ExtractPageLinesFromFile(path string, pageIndex int) ([]TextLine, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return ExtractPageLines(data, pageIndex)
 }

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/png"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -528,4 +530,22 @@ func renderTfOp(ts *renderTextState, fontResources map[string]*renderFont, token
 	}
 	renderTf(ts, fontResources, name, size)
 	return nil
+}
+
+// RenderPageToFile renders a PDF page to a PNG file on disk.
+func RenderPageToFile(pdfPath string, pageIndex int, outPath string, opt RenderOption) error {
+	data, err := os.ReadFile(pdfPath)
+	if err != nil {
+		return err
+	}
+	img, err := RenderPageToImage(data, pageIndex, opt)
+	if err != nil {
+		return err
+	}
+	f, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return png.Encode(f, img)
 }
