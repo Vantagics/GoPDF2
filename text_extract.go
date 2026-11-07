@@ -818,6 +818,11 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 			continue
 		}
 
+		// Effective rendered size: Tf sets the nominal size, the Tm matrix
+		// carries the scale (e.g. "1 Tf" + Tm with a=9.96). Text operators
+		// in this iteration emit runs with this size.
+		effSize := fontSize * math.Hypot(tmA, tmB)
+
 		switch string(tok) {
 		case "BT":
 			inText = true
@@ -871,9 +876,10 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 			tmX = args[4]
 			tmY = args[5]
 			tlmX, tlmY = tmX, tmY
-			if args[0] != 0 {
-				fontSize = math.Abs(args[0])
-			}
+			// Rendered size stays Tf-only: effective size is computed per
+			// show op as fontSize × |Tm scale|. Overwriting fontSize from
+			// Tm-a here corrupted PDFs whose Tm was translation-only
+			// ("1 0 0 1 x y" → fontSize=1) — e.g. arXiv/pdflatex pages.
 		case "T*":
 			if !inText {
 				continue
@@ -900,7 +906,8 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 						X:        x,
 						Y:        y,
 						FontName: fontDisplayName(curFont),
-						FontSize: fontSize,
+						FontSize: effSize,
+						Width:    shownWidth(raw, curFont, fontSize) * math.Hypot(tmA, tmB),
 					})
 				}
 				// Advance the text position by the glyph widths shown,
@@ -946,8 +953,8 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 					X:        x,
 					Y:        y,
 					FontName: fontDisplayName(curFont),
-					FontSize: fontSize,
-					Width:    tjWidth(arr, curFont, fontSize),
+					FontSize: effSize,
+					Width:    tjWidth(arr, curFont, fontSize) * math.Hypot(tmA, tmB),
 				})
 			}
 			tmX += advance * tmA
@@ -967,8 +974,8 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 					y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
 					results = append(results, ExtractedText{
 						Text: text, X: x, Y: y,
-						FontName: fontDisplayName(curFont), FontSize: fontSize,
-						Width: shownWidth(raw, curFont, fontSize),
+						FontName: fontDisplayName(curFont), FontSize: effSize,
+						Width: shownWidth(raw, curFont, fontSize) * math.Hypot(tmA, tmB),
 					})
 				}
 				tmX += shownAdvance(raw, curFont, fontSize)
@@ -989,8 +996,8 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 					y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
 					results = append(results, ExtractedText{
 						Text: text, X: x, Y: y,
-						FontName: fontDisplayName(curFont), FontSize: fontSize,
-						Width: shownWidth(raw, curFont, fontSize),
+						FontName: fontDisplayName(curFont), FontSize: effSize,
+						Width: shownWidth(raw, curFont, fontSize) * math.Hypot(tmA, tmB),
 					})
 				}
 				tmX += shownAdvance(raw, curFont, fontSize)

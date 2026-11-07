@@ -683,7 +683,8 @@ func isNameChar(c byte) bool {
 }
 
 // extractRef extracts a single "N 0 R" reference for a given key.
-// Uses string search + pre-compiled regex to avoid per-call compilation.
+// Also accepts array-wrapped values (e.g. /DescendantFonts [9 0 R]), taking
+// the first reference. Uses string search + pre-compiled regex.
 func extractRef(dict, key string) int {
 	idx := strings.Index(dict, key)
 	if idx < 0 {
@@ -691,10 +692,22 @@ func extractRef(dict, key string) int {
 	}
 	rest := dict[idx+len(key):]
 	rest = strings.TrimLeft(rest, " \t\r\n")
+	if strings.HasPrefix(rest, "[") {
+		// Array form: use the first reference inside the brackets.
+		end := strings.Index(rest, "]")
+		if end < 0 {
+			return 0
+		}
+		if m := reObjRef.FindStringSubmatch(rest[1:end]); m != nil {
+			n, _ := strconv.Atoi(m[1])
+			return n
+		}
+		return 0
+	}
 	m := reObjRef.FindStringSubmatch(rest)
 	if m != nil {
 		// Verify the match starts at the beginning (the ref follows the key directly)
-		if strings.HasPrefix(strings.TrimLeft(rest, " \t\r\n"), m[0]) {
+		if strings.HasPrefix(rest, m[0]) {
 			n, _ := strconv.Atoi(m[1])
 			return n
 		}

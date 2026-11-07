@@ -115,3 +115,127 @@ func TestExtractionRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestTwoColumnReadingOrder generates a two-column page with a full-width
+// title and verifies lines are emitted in reading order (title, then the
+// left column top-down, then the right column) instead of interleaved by Y.
+func TestTwoColumnReadingOrder(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: Rect{W: 595, H: 842}})
+	pdf.AddPage()
+	if err := pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pdf.SetFont("lib", "", 12); err != nil {
+		t.Fatal(err)
+	}
+
+	// Full-width title: long enough to cross the gutter between the columns.
+	pdf.SetXY(60, 40)
+	_ = pdf.Cell(nil, "A Long Title Spanning the Full Width of the Two Text Columns Below")
+
+	// Left column: lines ending well before the right column starts.
+	leftLines := make([]string, 0, 4)
+	for i := 0; i < 4; i++ {
+		txt := "Left " + itoa(i) + " lorem ipsum dolor sit amet"
+		w, err := pdf.MeasureTextWidth(txt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if 60+w >= 340 {
+			t.Fatalf("left line too wide: %.0f", 60+w)
+		}
+		pdf.SetXY(60, float64(100+i*20))
+		_ = pdf.Cell(nil, txt)
+		leftLines = append(leftLines, txt)
+	}
+	// Right column: independent baselines, like real two-column typesetting.
+	rightLines := make([]string, 0, 4)
+	for i := 0; i < 4; i++ {
+		txt := "Right " + itoa(i) + " lorem ipsum dolor sit amet"
+		w, err := pdf.MeasureTextWidth(txt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if 380+w >= 560 {
+			t.Fatalf("right line too wide: %.0f", 380+w)
+		}
+		pdf.SetXY(380, float64(105+i*20))
+		_ = pdf.Cell(nil, txt)
+		rightLines = append(rightLines, txt)
+	}
+
+	path := filepath.Join(t.TempDir(), "twocol.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	lines, err := ExtractPageLines(data, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Expected order: title, Left 0..3, Right 0..3.
+	want := []string{"A Long Title Spanning the Full Width of the Two Text Columns Below"}
+	want = append(want, leftLines...)
+	want = append(want, rightLines...)
+
+	if len(lines) != len(want) {
+		var got []string
+		for _, ln := range lines {
+			got = append(got, ln.Text)
+		}
+		t.Fatalf("got %d lines %v, want %d", len(lines), got, len(want))
+	}
+	for i, ln := range lines {
+		if ln.Text != want[i] {
+			t.Errorf("line %d = %q, want %q", i, ln.Text, want[i])
+		}
+	}
+}
+
+// TestFormatWordsRealPositions verifies the word-level extraction carries
+// true per-word positions: words within one run advance in X instead of all
+// sharing the run origin.
+func TestFormatWordsRealPositions(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	pdf.AddPage()
+	if err := pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pdf.SetFont("lib", "", 12); err != nil {
+		t.Fatal(err)
+	}
+	pdf.SetXY(50, 100)
+	_ = pdf.Cell(nil, "Hello wide world examples")
+
+	path := filepath.Join(t.TempDir(), "words.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	v, err := ExtractTextFormatted(data, 0, FormatWords)
+	if err != nil {
+		t.Fatal(err)
+	}
+	words, ok := v.([]TextWord)
+	if !ok || len(words) < 4 {
+		t.Fatalf("expected >=4 TextWords, got %T %v", v, v)
+	}
+	if words[0].Text != "Hello" {
+		t.Fatalf("first word = %q", words[0].Text)
+	}
+	// Each subsequent word must start strictly to the right of the previous
+	// word's end; widths must be plausible (0 < w < 8 * fontsize).
+	for i := 1; i < len(words); i++ {
+		prev, cur := words[i-1], words[i]
+		if cur.X <= prev.X+prev.Width {
+			t.Errorf("word %d (%q) X=%.2f does not advance past word %d (%q) end %.2f",
+				i, cur.Text, cur.X, i-1, prev.Text, prev.X+prev.Width)
+		}
+		if cur.Width <= 0 || cur.Width > 8*cur.FontSize {
+			t.Errorf("word %d (%q) implausible width %.2f", i, cur.Text, cur.Width)
+		}
+	}
+}
