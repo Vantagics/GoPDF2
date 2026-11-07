@@ -28,6 +28,21 @@ type mergedRun struct {
 // runs starts a new word (spaces ≈ 0.22-0.30 em, kerning noise < 0.05 em).
 const mergeGapRatio = 0.15
 
+// cjkMergeGapRatio is the tighter threshold for CJK runs, which are
+// typically packed without inter-character spacing.
+const cjkMergeGapRatio = 0.08
+
+// isCJKRun reports whether the text contains CJK characters.
+func isCJKRun(text string) bool {
+	for _, r := range text {
+		if (r >= 0x2E80 && r <= 0x9FFF) || (r >= 0xF900 && r <= 0xFAFF) ||
+			(r >= 0xFF00 && r <= 0xFF60) || (r >= 0x3000 && r <= 0x303F) {
+			return true
+		}
+	}
+	return false
+}
+
 // estimateRunWidth estimates the advance width of a run.
 // nextX is the left edge of the following run on the same line (-1 if none).
 func estimateRunWidth(e ExtractedText, nextX float64) float64 {
@@ -148,7 +163,13 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 			}
 			// gap between the previous run's estimated end and this run's start
 			gap := r.X - (lastX + lastW)
-			if !spaceSeen && gap <= mergeGapRatio*size {
+			// CJK characters are packed tightly without spaces — use a
+			// tighter threshold so CJK glyphs merge into words correctly
+			ratio := mergeGapRatio
+			if isCJKRun(r.Text) {
+				ratio = cjkMergeGapRatio
+			}
+			if !spaceSeen && gap <= ratio*size {
 				// same word: append without space
 				cur.WriteString(r.Text)
 				wordW += gap + w

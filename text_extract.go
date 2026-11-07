@@ -786,6 +786,8 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 		fontSize float64
 		// Text matrix components
 		tmX, tmY float64
+		tmA, tmB float64 = 1, 0 // rotation/scale components
+		tmC, tmD float64 = 0, 1
 		// Line matrix
 		tlmX, tlmY float64
 		// CTM (simplified — only tracking translation)
@@ -861,7 +863,11 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 				continue
 			}
 			args := popN(6)
-			// args = [a b c d e f]
+			// args = [a b c d e f] — store full rotation/scale matrix
+			tmA = args[0]
+			tmB = args[1]
+			tmC = args[2]
+			tmD = args[3]
 			tmX = args[4]
 			tmY = args[5]
 			tlmX, tlmY = tmX, tmY
@@ -897,8 +903,13 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 						FontSize: fontSize,
 					})
 				}
-				// Advance the text position by the glyph widths shown.
-				tmX += shownAdvance(raw, curFont, fontSize)
+				// Advance the text position by the glyph widths shown,
+				// projected onto the x axis using the Tm rotation.
+				adv := shownAdvance(raw, curFont, fontSize)
+				tmX += adv * tmA
+				tmY += adv * tmB
+				_ = tmC
+				_ = tmD
 			}
 		case "TJ":
 			if !inText {
@@ -939,7 +950,8 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 					Width:    tjWidth(arr, curFont, fontSize),
 				})
 			}
-			tmX += advance
+			tmX += advance * tmA
+			tmY += advance * tmB
 		case "'":
 			// Move to next line and show string
 			if !inText {
