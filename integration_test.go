@@ -94,10 +94,10 @@ func TestFullIntegration(t *testing.T) {
 
 	// === Phase 3: AES-encrypted copy: no leak + password extraction ===
 	pdf.SetEncryption(AESEncryptionConfig{
-		Method:       EncryptAES256,
-		UserPassword: "integration",
+		Method:        EncryptAES256,
+		UserPassword:  "integration",
 		OwnerPassword: "owner",
-		Permissions:  PermissionsPrint | PermissionsCopy,
+		Permissions:   PermissionsPrint | PermissionsCopy,
 	})
 	encOut := filepath.Join(t.TempDir(), "integration_enc.pdf")
 	if err := pdf.WritePdf(encOut); err != nil {
