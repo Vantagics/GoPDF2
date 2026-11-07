@@ -359,9 +359,7 @@ func (m *minTTF) parseSimpleGlyf(g []byte, numberOfContours int) ([][]glyphPt, e
 
 	// flags
 	flags := make([]byte, numPoints)
-	print("[glyf] raw g[189:195]:")
 	for i := 189; i < 195 && i < len(g); i++ {
-		print(" ", g[i])
 	}
 	for i := 0; i < numPoints && pos < len(g); {
 		f := g[pos]
