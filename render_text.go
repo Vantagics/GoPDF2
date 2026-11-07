@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"math"
 	"sort"
 	"strings"
 )
@@ -224,7 +225,6 @@ func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA)
 	}
 
 	for y := minY; y <= maxY; y++ {
-		// sample line center
 		sy := float64(y) + 0.5
 		var xs []float64
 		for _, e := range edges {
@@ -236,18 +236,35 @@ func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA)
 			}
 		}
 		sort.Float64s(xs)
+		// paint spans with per-pixel coverage for anti-aliased edges
 		for i := 0; i+1 < len(xs); i += 2 {
-			x0 := int(xs[i] + 0.5)
-			x1 := int(xs[i+1] + 0.5)
-			if x0 < bounds.Min.X {
-				x0 = bounds.Min.X
-			}
-			if x1 > bounds.Max.X {
-				x1 = bounds.Max.X
-			}
-			for x := x0; x < x1; x++ {
-				if y >= bounds.Min.Y && y < bounds.Max.Y {
+			xStart := xs[i]
+			xEnd := xs[i+1]
+			pxStart := int(math.Floor(xStart))
+			pxEnd := int(math.Floor(xEnd))
+			for x := pxStart; x <= pxEnd; x++ {
+				if x < bounds.Min.X || x >= bounds.Max.X || y < bounds.Min.Y || y >= bounds.Max.Y {
+					continue
+				}
+				// compute pixel coverage [0,1]
+				coverL := math.Max(float64(x), xStart)
+				coverR := math.Min(float64(x+1), xEnd)
+				cov := coverR - coverL
+				if cov <= 0 {
+					continue
+				}
+				if cov >= 1 {
 					img.SetRGBA(x, y, fill)
+				} else {
+					// blend: new = fill*cov + old*(1-cov)
+					old := img.RGBAAt(x, y)
+					blended := color.RGBA{
+						R: uint8(float64(fill.R)*cov + float64(old.R)*(1-cov)),
+						G: uint8(float64(fill.G)*cov + float64(old.G)*(1-cov)),
+						B: uint8(float64(fill.B)*cov + float64(old.B)*(1-cov)),
+						A: 255,
+					}
+					img.SetRGBA(x, y, blended)
 				}
 			}
 		}
