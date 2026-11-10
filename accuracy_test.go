@@ -239,3 +239,81 @@ func TestFormatWordsRealPositions(t *testing.T) {
 		}
 	}
 }
+
+// TestParagraphReconstruction generates a page with wrapped paragraphs
+// (hyphenated splits, indents, paragraph spacing) and verifies the
+// paragraph API reconstructs the original text.
+func TestParagraphReconstruction(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	pdf.AddPage()
+	if err := pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pdf.SetFont("lib", "", 11); err != nil {
+		t.Fatal(err)
+	}
+
+	// Paragraph 1: two wrapped lines ending with a hyphenated split.
+	p1a := "Recurrent neural networks are difficult to train because their sequential na-"
+	p1b := "ture precludes parallelization within training examples."
+	// Paragraph 2: first-line indent + terminal punctuation on previous line.
+	p2a := "Attention mechanisms read entire sequences at once."
+	p2b := "They model dependencies without regard to distance."
+
+	pdf.SetXY(50, 60)
+	_ = pdf.Cell(nil, p1a)
+	pdf.SetXY(50, 76)
+	_ = pdf.Cell(nil, p1b)
+	pdf.SetXY(66, 100) // indented first line, extra spacing above
+	_ = pdf.Cell(nil, p2a)
+	pdf.SetXY(50, 116)
+	_ = pdf.Cell(nil, p2b)
+
+	path := filepath.Join(t.TempDir(), "para.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	paras, err := ExtractPageParagraphs(data, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// p2a ends with terminal punctuation, so it deliberately starts its own
+	// paragraph: expect [p1 wrapped], [p2a], [p2b].
+	if len(paras) != 3 {
+		for i, p := range paras {
+			t.Logf("para %d: %q", i, p.Text)
+		}
+		t.Fatalf("got %d paragraphs, want 3", len(paras))
+	}
+	// the hyphenated split "na-/ture" joins into "nature"
+	wantP1 := p1a[:len(p1a)-1] + p1b
+	if paras[0].Text != wantP1 {
+		t.Errorf("paragraph 1 = %q, want %q", paras[0].Text, wantP1)
+	}
+	if paras[1].Text != p2a {
+		t.Errorf("paragraph 2 = %q", paras[1].Text)
+	}
+	if paras[2].Text != p2b {
+		t.Errorf("paragraph 3 = %q", paras[2].Text)
+	}
+}
+
+// TestParagraphHyphenJoin verifies a hyphenated line split joins into one
+// word across the paragraph boundary.
+func TestParagraphHyphenJoin(t *testing.T) {
+	lines := []TextLine{
+		{Y: 100, Text: "paralleliza-", Words: []TextWord{{X: 50, Y: 100, Width: 60, Height: 11, Text: "paralleliza-"}}},
+		{Y: 114, Text: "tion improves throughput.", Words: []TextWord{{X: 50, Y: 114, Width: 120, Height: 11, Text: "tion improves throughput."}}},
+	}
+	paras := ParagraphsFromLines(lines)
+	if len(paras) != 1 {
+		t.Fatalf("got %d paragraphs, want 1", len(paras))
+	}
+	want := "parallelization improves throughput."
+	if paras[0].Text != want {
+		t.Errorf("text = %q, want %q", paras[0].Text, want)
+	}
+}
