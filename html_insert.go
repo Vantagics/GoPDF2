@@ -84,6 +84,17 @@ type htmlRenderState struct {
 	marginTop  float64 // block margin, units
 	marginBot  float64
 	vAlign     int // table cell vertical alignment: Top/Middle/Bottom
+
+	// block-level left border (e.g. blockquote rule, callout accent)
+	borderLeftHas bool
+	borderLeftW   float64
+	borderLeftR   uint8
+	borderLeftG   uint8
+	borderLeftB   uint8
+	borderLeftX   float64 // absolute x of the border line
+	padTop        float64 // block padding, units
+	padBot        float64
+	padLeft       float64
 }
 
 // htmlRenderer handles the rendering of HTML nodes into the PDF.
@@ -480,6 +491,32 @@ func (r *htmlRenderer) applyCSSProps(css map[string]string, state htmlRenderStat
 		if cr, cg, cb, cok := parseCSSColor(color); cok {
 			state.bgR, state.bgG, state.bgB = cr, cg, cb
 			state.hasBg = true
+		}
+	}
+	if bl, ok := css["border-left"]; ok {
+		if w, col, ok2 := parseCSSBorderSide(bl); ok2 {
+			state.borderLeftHas = true
+			state.borderLeftW = w / r.unitConversion()
+			state.borderLeftR, state.borderLeftG, state.borderLeftB = col[0], col[1], col[2]
+		}
+	}
+	if p, ok := css["padding-left"]; ok {
+		if v, ok2 := parseCSSLenPx(p); ok2 {
+			state.padLeft = v / r.unitConversion()
+		}
+	}
+	if p, ok := css["padding"]; ok {
+		fields := strings.Fields(p)
+		if len(fields) >= 1 {
+			if v, ok2 := parseCSSLenPx(fields[0]); ok2 {
+				state.padTop = v / r.unitConversion()
+				state.padBot = v / r.unitConversion()
+			}
+		}
+		if len(fields) >= 2 {
+			if v, ok2 := parseCSSLenPx(fields[1]); ok2 {
+				state.padLeft = v / r.unitConversion()
+			}
 		}
 	}
 	if fs, ok := css["font-size"]; ok {
@@ -1027,6 +1064,19 @@ func (r *htmlRenderer) flowBlock(children []*htmlNode, state htmlRenderState, de
 	if depth > 32 {
 		return nil
 	}
+	// block padding: shift the content box inside the block's box and add
+	// vertical padding space; the border-left anchors at the outer edge
+	if state.borderLeftHas {
+		state.borderLeftX = r.boxX + state.borderLeftW*0.5
+	}
+	if state.padLeft > 0 {
+		r.boxX += state.padLeft
+		r.boxW -= state.padLeft
+	}
+	if state.padTop > 0 {
+		r.cursorY += state.padTop
+	}
+
 	var frags []textFragment
 	var blocks []blockItem
 	r.collectInlineFragments(children, state, &frags, &blocks)
@@ -1044,6 +1094,13 @@ func (r *htmlRenderer) flowBlock(children []*htmlNode, state htmlRenderState, de
 	if r.cursorX > r.boxX {
 		r.cursorX = r.boxX
 		r.cursorY += r.lineHeightOf(state)
+	}
+	if state.padBot > 0 {
+		r.cursorY += state.padBot
+	}
+	if state.padLeft > 0 {
+		r.boxX -= state.padLeft
+		r.boxW += state.padLeft
 	}
 	if state.marginBot > 0 {
 		r.cursorY += state.marginBot
@@ -1225,6 +1282,25 @@ func (r *htmlRenderer) renderTextLines(lines [][]textFragment, state htmlRenderS
 		if state.hasBg {
 			r.gp.SetFillColor(state.bgR, state.bgG, state.bgB)
 			r.gp.RectFromUpperLeftWithStyle(r.boxX, r.cursorY, r.boxW, lh, "F")
+		}
+		// block left border: one vertical segment per line band; the
+		// contiguous segments visually form a continuous rule
+		if state.borderLeftHas {
+			r.gp.SetStrokeColor(state.borderLeftR, state.borderLeftG, state.borderLeftB)
+			r.gp.SetLineWidth(state.borderLeftW)
+			r.gp.Line(state.borderLeftX, r.cursorY, state.borderLeftX, r.cursorY+lh)
+		}
+
+		// the line band already painted the block background across the
+		// full width; a fragment repainting the same color would cover the
+		// block's left border, so drop duplicates
+		if state.hasBg {
+			for i := range line {
+				fs := &line[i].state
+				if fs.hasBg && fs.bgR == state.bgR && fs.bgG == state.bgG && fs.bgB == state.bgB {
+					fs.hasBg = false
+				}
+			}
 		}
 
 		lineW := 0.0
@@ -2301,6 +2377,44 @@ func (r *htmlRenderer) tableBorder(node *htmlNode, state htmlRenderState) htmlBo
 	return spec
 }
 
+// parseCSSBorderSide parses a border-left shorthand like "4px solid #1a3c6e",
+// returning the width and color. The style keyword is ignored.
+func parseCSSBorderSide(s string) (float64, [3]uint8, bool) {
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return 0, [3]uint8{}, false
+	}
+	w, err := strconv.ParseFloat(strings.TrimSuffix(fields[0], "px"), 64)
+	if err != nil || w <= 0 {
+		return 0, [3]uint8{}, false
+	}
+	for _, f := range fields[1:] {
+		if cr, cg, cb, ok := parseCSSColor(f); ok {
+			return w, [3]uint8{cr, cg, cb}, true
+		}
+	}
+	return w, [3]uint8{0, 0, 0}, true
+}
+
+// parseCSSLenPx parses a CSS length like "8px", "0.5em" or "50%" (relative
+// to 16px base) into pixel-ish units.
+func parseCSSLenPx(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if strings.HasSuffix(s, "px") {
+		v, err := strconv.ParseFloat(strings.TrimSuffix(s, "px"), 64)
+		return v, err == nil
+	}
+	if strings.HasSuffix(s, "em") {
+		v, err := strconv.ParseFloat(strings.TrimSuffix(s, "em"), 64)
+		return v * 16, err == nil
+	}
+	if strings.HasSuffix(s, "%") {
+		v, err := strconv.ParseFloat(strings.TrimSuffix(s, "%"), 64)
+		return v / 100 * 16, err == nil
+	}
+	return 0, false
+}
+
 // parseCSSBorderWidth extracts a leading width from a border shorthand.
 func parseCSSBorderWidth(b string) (float64, string) {
 	fields := strings.Fields(b)
@@ -2346,7 +2460,9 @@ func (r *htmlRenderer) drawHTMLTableCell(x, y, w, h float64, cell htmlTableCell,
 		r.gp.RectFromUpperLeftWithStyle(x, y, w, h, "F")
 	}
 
-	// borders
+	// borders — border-collapse semantics: shared edges are painted once.
+	// Each cell paints its bottom and right edges; top/left only on the
+	// table's outer edges (row 0 / column 0), so no edge is drawn twice.
 	if cellState.hasBg || cell.header || tblBorder.has {
 		borderR, borderG, borderB := uint8(0), uint8(0), uint8(0)
 		if tblBorder.has {
@@ -2358,10 +2474,14 @@ func (r *htmlRenderer) drawHTMLTableCell(x, y, w, h float64, cell htmlTableCell,
 		}
 		r.gp.SetStrokeColor(borderR, borderG, borderB)
 		r.gp.SetLineWidth(bwCell)
-		r.gp.Line(x, y, x+w, y)
-		r.gp.Line(x+w, y, x+w, y+h)
 		r.gp.Line(x, y+h, x+w, y+h)
-		r.gp.Line(x, y, x, y+h)
+		r.gp.Line(x+w, y, x+w, y+h)
+		if cell.row == 0 {
+			r.gp.Line(x, y, x+w, y)
+		}
+		if cell.col == 0 {
+			r.gp.Line(x, y, x, y+h)
+		}
 	}
 
 	// content

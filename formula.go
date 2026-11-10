@@ -488,7 +488,8 @@ func (gp *GoPdf) renderFormulaTokens(tokens []*formulaToken, x, baselineY, fontS
 			cur += w + fontSize*0.15
 		case 'q':
 			sm := gp.measureFormulaLayout(tok.children, fontSize)
-			// radical glyph
+			// radical glyph (path-drawn radicals need the formula's
+			// coordinate conventions reworked; the glyph renders correctly)
 			wR, _ := gp.MeasureTextWidth("√")
 			if gp.curr.FontSize > 0 {
 				wR = wR * fontSize / gp.curr.FontSize

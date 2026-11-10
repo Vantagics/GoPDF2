@@ -152,6 +152,9 @@ func renderParsedPage(parser *rawPDFParser, pageIndex int, opt RenderOption) (im
 	return img, nil
 }
 
+// debugRender enables pixmap_render diagnostics via GOPDF_DEBUG_RENDER.
+var debugRender = os.Getenv("GOPDF_DEBUG_RENDER") != ""
+
 func min2(a, b float64) float64 {
 	if a < b {
 		return a
@@ -418,6 +421,9 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				for i, p := range pathPts {
 					dev[i] = [2]float64{p[0] * scale, (pageH - p[1]) * scale}
 				}
+				if debugRender {
+					fmt.Printf("DBG stroke n=%d pts=%v w=%.1f\n", len(dev), dev, lineWidth*scale)
+				}
 				strokePolyline(img, dev, lineWidth*scale, strokeColor)
 			}
 			pathPts = pathPts[:0]
@@ -630,7 +636,23 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 			dx := dstX + px
 			dy := dstY + py
 			if dx >= 0 && dx < img.Bounds().Max.X && dy >= 0 && dy < img.Bounds().Max.Y {
-				img.Set(dx, dy, srcImg.At(sx, sy))
+				// alpha-composite over the existing pixel (SMask
+				// transparency must blend with the page, not replace it)
+				sc := color.RGBAModel.Convert(srcImg.At(sx, sy)).(color.RGBA)
+				if sc.A == 255 {
+					img.SetRGBA(dx, dy, sc)
+				} else if sc.A > 0 {
+					d := img.RGBAAt(dx, dy)
+					a := uint32(sc.A)
+					inv := 255 - a
+					out := color.RGBA{
+						R: uint8((uint32(sc.R)*255 + uint32(d.R)*inv) / 255),
+						G: uint8((uint32(sc.G)*255 + uint32(d.G)*inv) / 255),
+						B: uint8((uint32(sc.B)*255 + uint32(d.B)*inv) / 255),
+						A: 255,
+					}
+					img.SetRGBA(dx, dy, out)
+				}
 			}
 		}
 	}
