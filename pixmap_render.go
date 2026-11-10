@@ -111,10 +111,19 @@ func renderParsedPage(parser *rawPDFParser, pageIndex int, opt RenderOption) (im
 		renderContentStream(img, stream, parser, page, scale, pageH)
 	}
 
+	// /Rotate: rotate the composed page — a rigid transform of the whole
+	// bitmap is exactly equivalent to rotating the page before drawing.
+	switch page.rotate {
+	case 90, 180, 270:
+		img = rotateImageRGBA(img, page.rotate)
+	}
+
 	// box-filter downsample by ss×
 	if ss > 1 {
-		outW := imgW / ss
-		outH := imgH / ss
+		// dims may have changed if the page was rotated above
+		rb := img.Bounds()
+		outW := rb.Dx() / ss
+		outH := rb.Dy() / ss
 		if outW < 1 {
 			outW = 1
 		}
@@ -150,6 +159,36 @@ func renderParsedPage(parser *rawPDFParser, pageIndex int, opt RenderOption) (im
 		return out, nil
 	}
 	return img, nil
+}
+
+// rotateImageRGBA returns img rotated clockwise by 90/180/270 degrees.
+func rotateImageRGBA(img *image.RGBA, deg int) *image.RGBA {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	switch deg {
+	case 90, 270:
+		out := image.NewRGBA(image.Rect(0, 0, h, w))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				c := img.RGBAAt(b.Min.X+x, b.Min.Y+y)
+				if deg == 90 {
+					out.SetRGBA(h-1-y, x, c)
+				} else {
+					out.SetRGBA(y, w-1-x, c)
+				}
+			}
+		}
+		return out
+	case 180:
+		out := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				out.SetRGBA(w-1-x, h-1-y, img.RGBAAt(b.Min.X+x, b.Min.Y+y))
+			}
+		}
+		return out
+	}
+	return img
 }
 
 // debugRender enables pixmap_render diagnostics via GOPDF_DEBUG_RENDER.

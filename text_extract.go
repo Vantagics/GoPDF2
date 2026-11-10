@@ -73,6 +73,7 @@ func extractTextRawPage(pdfData []byte, pageIndex int) ([]ExtractedText, error) 
 		fonts:    fonts,
 		xobjs:    page.resources.xobjs,
 		mediaBox: page.mediaBox,
+		rotate:   page.rotate,
 		visited:  map[int]bool{},
 	}, stream), nil
 }
@@ -96,6 +97,7 @@ func ExtractTextFromAllPages(pdfData []byte) (map[int][]ExtractedText, error) {
 				fonts:    fonts,
 				xobjs:    page.resources.xobjs,
 				mediaBox: page.mediaBox,
+				rotate:   page.rotate,
 				visited:  map[int]bool{},
 			}, stream)
 			if len(texts) > 0 {
@@ -713,10 +715,28 @@ type extractionContext struct {
 	fonts    map[string]*fontInfo
 	xobjs    map[string]int // resource name -> object number
 	mediaBox [4]float64
+	rotate   int     // /Rotate degrees clockwise (0/90/180/270)
 	offX     float64 // Do translation offset already applied within this ctx
 	offY     float64
 	depth    int
 	visited  map[int]bool
+}
+
+// pageRotateCoords maps unrotated top-down page coordinates to visual
+// coordinates for a page with /Rotate 90/180/270. With /Rotate 90 the page
+// displays rotated clockwise, so the visual width/height swap.
+func (ctx *extractionContext) pageRotateCoords(x, y float64) (float64, float64) {
+	w := ctx.mediaBox[2] - ctx.mediaBox[0]
+	h := ctx.mediaBox[3] - ctx.mediaBox[1]
+	switch ctx.rotate {
+	case 90:
+		return h - y, x
+	case 180:
+		return w - x, h - y
+	case 270:
+		return y, w - x
+	}
+	return x, y
 }
 
 const maxFormDepth = 4
@@ -912,8 +932,9 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 				raw := findStringBefore(tokens, i)
 				text := decodeTextString(string(raw), curFont)
 				if text != "" {
-					x := ctx.offX + ctmA*tmX + ctmE
-					y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
+					xRaw := ctx.offX + ctmA*tmX + ctmE
+					yRaw := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
+					x, y := ctx.pageRotateCoords(xRaw, yRaw)
 					results = append(results, ExtractedText{
 						Text:     text,
 						X:        x,
@@ -959,8 +980,9 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 			}
 			text := combined.String()
 			if text != "" {
-				x := ctx.offX + ctmA*tmX + ctmE
-				y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
+				xRaw := ctx.offX + ctmA*tmX + ctmE
+				yRaw := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
+				x, y := ctx.pageRotateCoords(xRaw, yRaw)
 				results = append(results, ExtractedText{
 					Text:     text,
 					X:        x,
@@ -983,8 +1005,9 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 				raw := findStringBefore(tokens, i)
 				text := decodeTextString(string(raw), curFont)
 				if text != "" {
-					x := ctx.offX + ctmA*tmX + ctmE
-					y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
+					xRaw := ctx.offX + ctmA*tmX + ctmE
+					yRaw := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
+					x, y := ctx.pageRotateCoords(xRaw, yRaw)
 					results = append(results, ExtractedText{
 						Text: text, X: x, Y: y,
 						FontName: fontDisplayName(curFont), FontSize: effSize,
@@ -1005,8 +1028,9 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 				raw := findStringBefore(tokens, i)
 				text := decodeTextString(string(raw), curFont)
 				if text != "" {
-					x := ctx.offX + ctmA*tmX + ctmE
-					y := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
+					xRaw := ctx.offX + ctmA*tmX + ctmE
+					yRaw := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
+					x, y := ctx.pageRotateCoords(xRaw, yRaw)
 					results = append(results, ExtractedText{
 						Text: text, X: x, Y: y,
 						FontName: fontDisplayName(curFont), FontSize: effSize,
@@ -1058,6 +1082,7 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 					fonts:    cachedFormFonts(ctx.parser, objNum, obj.dict),
 					xobjs:    cachedFormXObjects(ctx.parser, objNum, obj.dict),
 					mediaBox: ctx.mediaBox,
+					rotate:   ctx.rotate,
 					visited:  subVisited,
 				}
 				baseRuns = parseTextOperatorsCtx(sub, obj.stream)

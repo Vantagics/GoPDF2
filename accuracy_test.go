@@ -317,3 +317,114 @@ func TestParagraphHyphenJoin(t *testing.T) {
 		t.Errorf("text = %q, want %q", paras[0].Text, want)
 	}
 }
+
+// TestRotateExtraction verifies /Rotate 90: extraction coordinates map to
+// the visual (rotated) page space and the rendered canvas swaps dimensions.
+func TestRotateExtraction(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4}) // 595 x 842
+	pdf.AddPage()
+	if err := pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pdf.SetFont("lib", "", 12); err != nil {
+		t.Fatal(err)
+	}
+	pdf.SetXY(50, 100)
+	_ = pdf.Cell(nil, "Rotated marker")
+	if err := pdf.SetPageRotation(1, 90); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "rot90.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+
+	texts, err := ExtractTextFromPage(data, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// /Rotate 90: (x, y) -> (h - y, x); unrotated (50, 100) -> (742, 50)
+	found := false
+	for _, tx := range texts {
+		if strings.Contains(tx.Text, "Rotated") {
+			found = true
+			// the cell baseline sits 8.32pt below the requested top,
+			// so visual X = h - (100 + 8.32)
+			wantX := 842.0 - 108.32
+			if dx := tx.X - wantX; dx < -2 || dx > 2 {
+				t.Errorf("X = %.1f, want ~%.1f", tx.X, wantX)
+			}
+			if dy := tx.Y - 50; dy < -14 || dy > 14 {
+				t.Errorf("Y = %.1f, want ~50 (baseline range)", tx.Y)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("rotated marker text not extracted")
+	}
+
+	// rendered canvas swaps to landscape
+	img, err := RenderPageToImage(data, 0, RenderOption{DPI: 72})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := img.Bounds()
+	if b.Dx() <= b.Dy() {
+		t.Errorf("rendered %dx%d, want landscape (842x612)", b.Dx(), b.Dy())
+	}
+}
+
+// TestRotateInheritedFromPagesTree verifies /Rotate on a /Pages node is
+// inherited by child pages (hand-crafted PDF).
+func TestRotateInheritedFromPagesTree(t *testing.T) {
+	// minimal PDF: one page inheriting /Rotate 180 from the Pages node
+	pdfBytes := []byte(`%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 595 842] /Rotate 180 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 44 >>
+stream
+BT /F1 12 Tf 50 770 Td (Inherited) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+trailer
+<< /Root 1 0 R >>
+`)
+	// The tolerant scanner recovers objects without a valid xref, so hand
+	// the raw object stream to ExtractTextFromPage.
+	texts, err := ExtractTextFromPage(pdfBytes, 0)
+	if err != nil {
+		t.Fatalf("extraction: %v", err)
+	}
+	// /Rotate 180: (x, y) -> (w - x, h - y); (50, 770 y-down? no —
+	// content Td 50 770 is y-up: y-down = 842-770 = 72)
+	// -> visual (595-50, 842-72) = (545, 770)
+	found := false
+	for _, tx := range texts {
+		if strings.Contains(tx.Text, "Inherited") {
+			found = true
+			if dx := tx.X - 545; dx < -2 || dx > 2 {
+				t.Errorf("X = %.1f, want ~545", tx.X)
+			}
+			if dy := tx.Y - 770; dy < -14 || dy > 14 {
+				t.Errorf("Y = %.1f, want ~770", tx.Y)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("inherited-rotation text not extracted")
+	}
+}

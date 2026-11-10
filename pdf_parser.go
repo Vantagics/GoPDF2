@@ -54,6 +54,7 @@ type rawPDFObject struct {
 type rawPDFPage struct {
 	objNum    int
 	mediaBox  [4]float64
+	rotate    int // /Rotate degrees clockwise (0/90/180/270)
 	contents  []int // content stream obj numbers
 	resources rawPDFResources
 }
@@ -632,12 +633,12 @@ func (p *rawPDFParser) parsePages() {
 }
 
 func (p *rawPDFParser) collectPages(objNum int) {
-	p.collectPagesInherited(objNum, [4]float64{})
+	p.collectPagesInherited(objNum, [4]float64{}, 0)
 }
 
 // collectPagesInherited walks the page tree, propagating inherited
 // attributes (MediaBox) from Pages nodes down to their Page leaves.
-func (p *rawPDFParser) collectPagesInherited(objNum int, inherited [4]float64) {
+func (p *rawPDFParser) collectPagesInherited(objNum int, inherited [4]float64, inheritedRotate int) {
 	obj, ok := p.objects[objNum]
 	if !ok {
 		return
@@ -650,6 +651,10 @@ func (p *rawPDFParser) collectPagesInherited(objNum int, inherited [4]float64) {
 			// page lacks its own MediaBox — inherit from the Pages tree
 			page.mediaBox = inherited
 		}
+		page.rotate = extractPageRotate(obj.dict)
+		if page.rotate == 0 {
+			page.rotate = inheritedRotate
+		}
 		page.contents = extractContentRefs(obj.dict)
 		page.resources = p.extractResources(obj.dict, objNum)
 		p.pages = append(p.pages, page)
@@ -659,11 +664,26 @@ func (p *rawPDFParser) collectPagesInherited(objNum int, inherited [4]float64) {
 		if inheritedMedia == [4]float64{0, 0, 612, 792} && inherited != [4]float64{} {
 			inheritedMedia = inherited
 		}
+		inheritedRot := extractPageRotate(obj.dict)
+		if inheritedRot == 0 {
+			inheritedRot = inheritedRotate
+		}
 		kids := extractRefArray(obj.dict, "/Kids")
 		for _, kid := range kids {
-			p.collectPagesInherited(kid, inheritedMedia)
+			p.collectPagesInherited(kid, inheritedMedia, inheritedRot)
 		}
 	}
+}
+
+// extractPageRotate parses /Rotate (0/90/180/270) from a page or Pages dict.
+// Non-multiples of 90 are ignored (returns 0).
+func extractPageRotate(dict string) int {
+	v := int(extractNumValue(dict, "/Rotate"))
+	switch v {
+	case 90, 180, 270:
+		return v
+	}
+	return 0
 }
 
 // pdfObjectType extracts the /Type value from a dict string with proper token
