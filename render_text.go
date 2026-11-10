@@ -335,17 +335,8 @@ func firstRefInArray(dict, key string) int {
 	if end < 0 {
 		return 0
 	}
-	m := reObjRef.FindStringSubmatch(rest[start : start+end])
-	if m == nil {
-		return 0
-	}
-	n := 0
-	for _, ch := range m[1] {
-		if ch < '0' || ch > '9' {
-			return 0
-		}
-		n = n*10 + int(ch-'0')
-	}
+	// skip the '[' itself: the ref must be scanned from the first element
+	n, _ := parseObjRefAt(rest[start+1 : start+end])
 	return n
 }
 

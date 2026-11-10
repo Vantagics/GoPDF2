@@ -14,7 +14,6 @@ import (
 var (
 	reObjHeader = regexp.MustCompile(`(\d+)\s+0\s+obj\b`)
 	reRootRef   = regexp.MustCompile(`/Root\s+(\d+)\s+0\s+R`)
-	reObjRef    = regexp.MustCompile(`(\d+)\s+0\s+R`)
 	reNamedRef  = regexp.MustCompile(`/(\w+)\s+(\d+)\s+0\s+R`)
 	reMediaBox  = regexp.MustCompile(`/MediaBox\s*\[\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\]`)
 )
@@ -702,6 +701,43 @@ func isNameChar(c byte) bool {
 		c != '(' && c != ')' && c != '%' && c != '{' && c != '}'
 }
 
+// parseObjRefAt scans a "N 0 R" reference at the start of s (after optional
+// whitespace). Returns the object number and the index just past 'R', or -1.
+// Hand-rolled: extractRef runs on every dictionary key lookup, and the regex
+// cost showed up at ~10% of extraction CPU profiles.
+func parseObjRefAt(s string) (int, int) {
+	isWS := func(c byte) bool { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == 0 }
+	i := 0
+	for i < len(s) && isWS(s[i]) {
+		i++
+	}
+	start := i
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == start {
+		return 0, -1
+	}
+	n, err := strconv.Atoi(s[start:i])
+	if err != nil {
+		return 0, -1
+	}
+	for i < len(s) && isWS(s[i]) {
+		i++
+	}
+	// "0" ws "R"
+	if i+1 < len(s) && s[i] == '0' && isWS(s[i+1]) {
+		i += 2
+		for i < len(s) && isWS(s[i]) {
+			i++
+		}
+		if i < len(s) && s[i] == 'R' {
+			return n, i + 1
+		}
+	}
+	return 0, -1
+}
+
 // extractRef extracts a single "N 0 R" reference for a given key.
 // Also accepts array-wrapped values (e.g. /DescendantFonts [9 0 R]), taking
 // the first reference. Uses string search + pre-compiled regex.
@@ -718,19 +754,13 @@ func extractRef(dict, key string) int {
 		if end < 0 {
 			return 0
 		}
-		if m := reObjRef.FindStringSubmatch(rest[1:end]); m != nil {
-			n, _ := strconv.Atoi(m[1])
+		if n, _ := parseObjRefAt(rest[1:end]); n > 0 {
 			return n
 		}
 		return 0
 	}
-	m := reObjRef.FindStringSubmatch(rest)
-	if m != nil {
-		// Verify the match starts at the beginning (the ref follows the key directly)
-		if strings.HasPrefix(rest, m[0]) {
-			n, _ := strconv.Atoi(m[1])
-			return n
-		}
+	if n, _ := parseObjRefAt(rest); n > 0 {
+		return n
 	}
 	return 0
 }
@@ -752,11 +782,15 @@ func extractRefArray(dict, key string) []int {
 		return nil
 	}
 	arr := rest[start+1 : start+end]
-	matches := reObjRef.FindAllStringSubmatch(arr, -1)
 	var refs []int
-	for _, m := range matches {
-		n, _ := strconv.Atoi(m[1])
+	for pos := 0; pos < len(arr); {
+		n, next := parseObjRefAt(arr[pos:])
+		if next < 0 {
+			pos++
+			continue
+		}
 		refs = append(refs, n)
+		pos += next
 	}
 	return refs
 }
@@ -831,9 +865,7 @@ func (p *rawPDFParser) extractNamedRefs(dict, key string, out map[string]int) {
 		}
 	} else {
 		// reference to another object
-		m := reObjRef.FindStringSubmatch(rest)
-		if m != nil {
-			n, _ := strconv.Atoi(m[1])
+		if n, _ := parseObjRefAt(rest); n > 0 {
 			if obj, ok := p.objects[n]; ok {
 				matches := reNamedRef.FindAllStringSubmatch(obj.dict, -1)
 				for _, mm := range matches {
