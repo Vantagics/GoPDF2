@@ -275,6 +275,15 @@ func (gp *GoPdf) measureFormulaLayout(tokens []*formulaToken, fontSize float64) 
 				w = w * fontSize / gp.curr.FontSize
 			}
 			m.width += w
+			// text glyphs occupy vertical space too; without this the
+			// sqrt overline and fraction bars anchor to a zero ascent and
+			// cut through superscripts and tall glyphs
+			if a := fontSize * 0.72; a > m.ascent {
+				m.ascent = a
+			}
+			if d := fontSize * 0.22; d > m.descent {
+				m.descent = d
+			}
 		case '^', '_':
 			sm := gp.measureFormulaLayout(tok.children, scriptSize)
 			m.width += sm.width
@@ -493,9 +502,9 @@ func (gp *GoPdf) renderFormulaTokens(tokens []*formulaToken, x, baselineY, fontS
 			if err := gp.renderFormulaTokens(tok.children, cur, baselineY, fontSize); err != nil {
 				return err
 			}
-			// overline across the content
+			// overline across the content (clears superscript tops)
 			gp.SetLineWidth(0.6)
-			gp.Line(cur, baselineY-sm.ascent-fontSize*0.15, cur+sm.width, baselineY-sm.ascent-fontSize*0.15)
+			gp.Line(cur, baselineY-sm.ascent-fontSize*0.25, cur+sm.width, baselineY-sm.ascent-fontSize*0.25)
 			cur += sm.width + wR*0.4
 		case 'b':
 			var top, bot []*formulaToken

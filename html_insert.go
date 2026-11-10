@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -104,6 +105,7 @@ type htmlRenderer struct {
 	// imgCache memoizes <img> resolution per renderer (avoid re-reading and
 	// re-decoding the same image file); created lazily by newImageFragment
 	imgCache map[string]imageHolderCacheEntry
+	inTableCell int // >0 while drawing inside a table cell (disables legacy clip)
 }
 
 // imageHolderCacheEntry memoizes an <img> src resolution.
@@ -1205,7 +1207,10 @@ func (r *htmlRenderer) renderTextLines(lines [][]textFragment, state htmlRenderS
 		// page overflow check
 		lh := r.lineHeightOf(lineMaxState(line))
 		if !r.paginate {
-			if r.cursorY-r.boxY+lh > r.boxH {
+			// inside a table cell the inner box is smaller than one line
+			// height (row height minus padding) — clipping here would drop
+			// all cell text, so cells are exempt from the legacy clip
+			if r.inTableCell == 0 && r.cursorY-r.boxY+lh > r.boxH {
 				return nil // clip (legacy box behavior)
 			}
 		} else {
@@ -1826,6 +1831,10 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 
 	r.addVerticalSpace(state.fontSize * 0.2)
 	curY := r.cursorY
+	if debugTable {
+		fmt.Printf("DBG tbl: rows=%d cols=%d colWidths=%v rowHeights=%v boxY=%.1f boxH=%.1f curY=%.1f pag=%v\n",
+			grid.rows, grid.cols, colWidths, rowHeights, r.boxY, r.boxH, curY, r.paginate)
+	}
 
 	// draw cells row by row so page breaks happen between rows
 	cellsByRow := make(map[int][]htmlTableCell, grid.rows)
@@ -1958,6 +1967,9 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 	return nil
 }
 
+// debugTable enables renderTable diagnostics via GOPDF_DEBUG_TABLE.
+var debugTable = os.Getenv("GOPDF_DEBUG_TABLE") != ""
+
 // buildTableGrid builds the table cell grid, resolving colspan/rowspan.
 func (r *htmlRenderer) buildTableGrid(node *htmlNode, state htmlRenderState) *htmlGrid {
 	grid := &htmlGrid{}
@@ -2012,7 +2024,9 @@ func (r *htmlRenderer) buildTableGrid(node *htmlNode, state htmlRenderState) *ht
 					if rowspan < 1 {
 						rowspan = 1
 					}
-					cellState := state
+					// resolve the cell's own styles (inline style, classes)
+					// so background-color, color, text-align apply per cell
+					cellState := r.styleState(cellNode, state)
 					if cellNode.Tag == "th" {
 						cellState.fontStyle |= Bold
 						cellState.align = Center
@@ -2381,7 +2395,9 @@ func (r *htmlRenderer) drawHTMLTableCell(x, y, w, h float64, cell htmlTableCell,
 			}
 		}
 	}
+	r.inTableCell++
 	err := r.flowBlock(cell.node.Children, cellState, 0)
+	r.inTableCell--
 
 	r.cursorX, r.cursorY = prevX, prevY
 	r.boxX, r.boxY, r.boxW, r.boxH = prevBoxX, prevBoxY, prevBoxW, prevBoxH

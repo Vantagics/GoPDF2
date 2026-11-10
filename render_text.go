@@ -26,15 +26,23 @@ type renderFont struct {
 
 // renderTextState tracks the PDF text state while rendering.
 type renderTextState struct {
-	font        *renderFont
-	fontSize    float64
-	tmX, tmY    float64 // text matrix position (PDF space, y-up)
-	tlmX        float64
-	tlmY        float64
-	leading     float64
-	fill        color.RGBA
-	charSpacing float64 // Tc: extra spacing per glyph
-	wordSpacing float64 // Tw: extra spacing per space char
+	font         *renderFont
+	fontSize     float64
+	tmX, tmY     float64 // text matrix position (PDF space, y-up)
+	tmA, tmB     float64 // text matrix scale/rotation components
+	lineA, lineB float64 // line matrix components (restored by Td/TD/T*)
+	tlmX         float64
+	tlmY         float64
+	leading      float64
+	fill         color.RGBA
+	charSpacing  float64 // Tc: extra spacing per glyph
+	wordSpacing  float64 // Tw: extra spacing per space char
+}
+
+// effFontSize returns the rendered font size: Tf sets the nominal size and
+// the Tm matrix carries the scale/rotation (e.g. "15 Tf" + Tm scaled 1.5).
+func (ts *renderTextState) effFontSize() float64 {
+	return ts.fontSize * math.Hypot(ts.tmA, ts.tmB)
 }
 
 // resolveRenderFonts builds resource-name -> parsed embedded font mappings
@@ -287,7 +295,9 @@ func renderDrawText(img *image.RGBA, ts *renderTextState, rawToken []byte, pageH
 	}
 	penX := ts.tmX
 	penY := pageH - ts.tmY
-	drawTextRun(img, ts.font, data, ts.fontSize, penX*scale, penY*scale, ts.fill, ts.charSpacing*scale, ts.wordSpacing*scale)
+	// fontSize is in points; penX/penY are device pixels — convert the size
+	// so glyph outlines and advances render in the same device space.
+	drawTextRun(img, ts.font, data, ts.effFontSize()*scale, penX*scale, penY*scale, ts.fill, ts.charSpacing*scale, ts.wordSpacing*scale)
 }
 
 // renderTf handles the Tf operator: select a font resource and size.
