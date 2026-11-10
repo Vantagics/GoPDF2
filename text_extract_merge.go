@@ -1,6 +1,7 @@
 package gopdf
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"sort"
@@ -447,6 +448,9 @@ func lineSpan(words []mergedRun) (x0, x1 float64) {
 	return x0, x1
 }
 
+// debugGutter enables one-line diagnostics for gutter detection.
+var debugGutter = os.Getenv("GOPDF_DEBUG_GUTTER") != ""
+
 // classifyWord returns where a word sits relative to the gutter:
 // -1 left, +1 right, 0 overlapping the gutter interior.
 func classifyWord(x0, x1, gl, gr float64) int {
@@ -551,6 +555,10 @@ func detectColumnGutter(lines [][]mergedRun) (gutterL, gutterR float64, ok bool)
 		} else {
 			runStart = -1
 		}
+	}
+	if debugGutter {
+		fmt.Printf("DBG gutter: lines=%d gmin=%.1f gmax=%.1f minCross=%d bestRun=%d-%d w=%.1f\n",
+			len(lines), gmin, gmax, minCross, bestStart, bestEnd, float64(bestEnd-bestStart+1)*step)
 	}
 	if bestStart < 0 || float64(bestEnd-bestStart+1)*step < columnGutterMin {
 		return 0, 0, false

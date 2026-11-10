@@ -46,6 +46,9 @@ type rawPDFObject struct {
 	num    int
 	dict   string // dictionary content between << >>
 	stream []byte // decompressed stream content (nil if not a stream)
+	// body holds the object content for objects with no dictionary and no
+	// stream (arrays, numbers, names — e.g. an indirect /Widths array).
+	body string
 }
 
 // rawPDFPage holds parsed page info.
@@ -185,6 +188,9 @@ func (p *rawPDFParser) parseObjects() {
 		// extract dictionary
 		if dictStart := bytes.Index(objData, []byte("<<")); dictStart >= 0 {
 			obj.dict = extractDict(objData[dictStart:])
+		} else if bytes.Index(objData, []byte("stream")) < 0 {
+			// no dict and no stream: keep the body (array/number/name objects)
+			obj.body = trimObjBody(objData)
 		}
 		// extract stream
 		if streamStart := bytes.Index(objData, []byte("stream")); streamStart >= 0 {
@@ -205,6 +211,17 @@ func (p *rawPDFParser) parseObjects() {
 		}
 		p.objects[num] = obj
 	}
+}
+
+// trimObjBody strips the "N 0 obj" header and "endobj" trailer, returning the
+// bare object content (used for array/number/name objects).
+func trimObjBody(objData []byte) string {
+	if m := reObjHeader.FindSubmatchIndex(objData); m != nil && m[0] == 0 {
+		objData = objData[m[1]:]
+	}
+	objData = bytes.TrimSpace(objData)
+	objData = bytes.TrimSuffix(objData, []byte("endobj"))
+	return string(bytes.TrimSpace(objData))
 }
 
 // extractDict extracts the outermost <<...>> from data.
@@ -304,6 +321,9 @@ func (p *rawPDFParser) parseInnerObject(num int, body []byte) rawPDFObject {
 	}
 	if dictStart := strings.Index(s, "<<"); dictStart >= 0 {
 		res.dict = extractDict(body[dictStart:])
+	} else if strings.Index(s, "stream") < 0 {
+		// no dict and no stream: keep the body (array/number/name objects)
+		res.body = trimObjBody(body)
 	}
 	if streamStart := strings.Index(s, "stream"); streamStart >= 0 {
 		streamData := body[streamStart+6:]

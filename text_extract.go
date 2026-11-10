@@ -429,12 +429,25 @@ func parseFontWidths(parser *rawPDFParser, dict string) (map[int]float64, float6
 	first := int(extractNumValue(dict, "/FirstChar"))
 	last := int(extractNumValue(dict, "/LastChar"))
 	if last >= first && last-first < 65536 {
-		if wArr := extractNumberArray(dict, "/Widths"); len(wArr) > 0 {
-			for i, w := range wArr {
-				code := first + i
-				if code >= 0 && code <= 0xFFFF {
-					widths[code] = w
+		wArr := extractNumberArray(dict, "/Widths")
+		if len(wArr) == 0 {
+			// /Widths is often an indirect reference to the array object
+			// (LaTeX/pdfTeX output: "/Widths 5858 0 R"). The referenced
+			// object has no dictionary — its content lives in .body.
+			if wRef := extractRef(dict, "/Widths"); wRef > 0 {
+				if wObj, ok := parser.objects[wRef]; ok {
+					src := wObj.dict
+					if src == "" {
+						src = wObj.body
+					}
+					wArr = extractNumberArray(src, "")
 				}
+			}
+		}
+		for i, w := range wArr {
+			code := first + i
+			if code >= 0 && code <= 0xFFFF {
+				widths[code] = w
 			}
 		}
 	}
@@ -1164,11 +1177,17 @@ func tokenizeBytes(data []byte) [][]byte {
 		}
 		// regular token (name, number, operator)
 		start := i
+		if data[i] == '/' {
+			// name token: the leading '/' is part of the token; PDF
+			// delimiters are self-terminating, so "TJ/F27" (no whitespace,
+			// as pdfTeX emits) splits into "TJ" and "/F27".
+			i++
+		}
 		for i < n && data[i] != ' ' && data[i] != '\t' && data[i] != '\r' &&
 			data[i] != '\n' && data[i] != '\f' && data[i] != 0 &&
 			data[i] != '(' && data[i] != ')' &&
 			data[i] != '<' && data[i] != '>' && data[i] != '[' &&
-			data[i] != ']' && data[i] != '%' {
+			data[i] != ']' && data[i] != '%' && data[i] != '/' {
 			i++
 		}
 		if i > start {
