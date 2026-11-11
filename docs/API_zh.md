@@ -1079,6 +1079,25 @@ func ExtractPageDrawings(pdfData []byte, pageIndex int) ([]Drawing, error)
 func ExtractDrawingsFromFile(path string, pageIndex int) ([]Drawing, error)
 ```
 
+### 表格检测
+
+```go
+func ExtractTablesFromPage(pdfData []byte, pageIndex int) ([]Table, error)
+func ExtractTablesFromFile(path string, pageIndex int) ([]Table, error)
+
+type TableCell struct {
+    X, Y, W, H float64
+    Text       string
+}
+type Table struct {
+    X, Y, W, H float64 // 包围盒
+    ColCount   int
+    Rows       [][]TableCell
+}
+```
+
+检测有边框表格（PyMuPDF `find_tables` 对齐）：边框线按交叉连通分量分组（每个分量即一个候选表格），聚类成行/列网格，单元格按位置填充文字。坐标遵循 `/Rotate`。无边框表格无法检测——没有可聚类的网格线。
+
 - `ExtractPageParagraphs` — 最高层的文本 API：将阅读顺序的文本行重新合并为段落。换行以空格连接，断词连字符直接拼接（`"transduc-" + "tion"` → `"transduction"`），首行缩进与句末标点开启新段落。
 - `ExtractTextInRect` / `ExtractTextWordsInRect` — 按区域提取；坐标为视觉页面点（自上而下，遵循 `/Rotate`）。
 - `ExtractPageDrawings` — 矢量图形提取：直线、折线、矩形与贝塞尔曲线（已扁平化），含描边/填充颜色（RGB 与 DeviceCMYK）、线宽与绘制算符。遍历表单 XObject 并遵循 `/Rotate`。

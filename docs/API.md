@@ -1084,6 +1084,25 @@ func ExtractPageDrawings(pdfData []byte, pageIndex int) ([]Drawing, error)
 func ExtractDrawingsFromFile(path string, pageIndex int) ([]Drawing, error)
 ```
 
+### Table Detection
+
+```go
+func ExtractTablesFromPage(pdfData []byte, pageIndex int) ([]Table, error)
+func ExtractTablesFromFile(path string, pageIndex int) ([]Table, error)
+
+type TableCell struct {
+    X, Y, W, H float64
+    Text       string
+}
+type Table struct {
+    X, Y, W, H float64 // bounding box
+    ColCount   int
+    Rows       [][]TableCell
+}
+```
+
+Detects ruled tables (PyMuPDF `find_tables` parity): border lines are grouped into crossing-connected components (each component is a candidate table), clustered into row/column grids, and cells are filled with position-aware words. Coordinates honor `/Rotate`. Borderless tables are not detected — there is no grid to cluster.
+
 - `ExtractPageParagraphs` — the highest-level text API: merges reading-order lines back into paragraphs. Line wraps join with spaces, hyphenated splits join without the hyphen (`"transduc-" + "tion"` → `"transduction"`), first-line indents and terminal punctuation start new paragraphs.
 - `ExtractTextInRect` / `ExtractTextWordsInRect` — region-scoped extraction; coordinates are visual page points (top-down, honoring `/Rotate`).
 - `ExtractPageDrawings` — vector graphics extraction: lines, polylines, rects and bezier curves with stroke/fill colors (RGB and DeviceCMYK), stroke width and paint op. Bezier curves are flattened. Walks form XObjects and honors `/Rotate`.
