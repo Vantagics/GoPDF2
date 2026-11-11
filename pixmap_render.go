@@ -91,8 +91,14 @@ func renderParsedPage(parser *rawPDFParser, pageIndex int, opt RenderOption) (im
 	pageW := mediaBox[2] - mediaBox[0]
 	pageH := mediaBox[3] - mediaBox[1]
 
-	const ss = 2 // supersampling factor
-	scale := opt.DPI / 72.0 * ss
+	// supersample at low DPI where hairlines ($ bars, fraction rules)
+	// would otherwise vanish; at >= 144 DPI lines already span multiple
+	// pixels, so skip the 4x cost
+	ss := 1
+	if opt.DPI < 144 {
+		ss = 2
+	}
+	scale := opt.DPI / 72.0 * float64(ss)
 	imgW := int(math.Ceil(pageW * scale))
 	imgH := int(math.Ceil(pageH * scale))
 	if imgW < 1 {

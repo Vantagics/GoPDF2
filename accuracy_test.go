@@ -428,3 +428,64 @@ trailer
 		t.Errorf("inherited-rotation text not extracted")
 	}
 }
+
+// TestThreeColumnReadingOrder verifies recursive gutter detection orders
+// three-column pages column by column.
+func TestThreeColumnReadingOrder(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: Rect{W: 842, H: 595}}) // landscape A4: fits 3 columns
+	pdf.AddPage()
+	if err := pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pdf.SetFont("lib", "", 10); err != nil {
+		t.Fatal(err)
+	}
+	pdf.SetXY(40, 40)
+	_ = pdf.Cell(nil, "A Wide Title Spanning All Three Columns Of The Page")
+
+	colXs := []float64{40, 310, 580}
+	var want []string
+	for ci, cx := range colXs {
+		tag := []string{"C1", "C2", "C3"}[ci]
+		for i := 0; i < 4; i++ {
+			txt := tag + " line " + itoa(i) + " lorem ipsum dolor"
+			w, err := pdf.MeasureTextWidth(txt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cx+w >= cx+250 && ci < 2 {
+				t.Fatalf("column %d too wide: %.0f", ci, cx+w)
+			}
+			pdf.SetXY(cx, float64(100+i*18))
+			_ = pdf.Cell(nil, txt)
+			want = append(want, txt)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "threecol.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	lines, err := ExtractPageLines(data, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, ln := range lines {
+		got = append(got, ln.Text)
+	}
+	// expected: title first, then C1 0..3, C2 0..3, C3 0..3
+	if len(got) != len(want)+1 {
+		t.Fatalf("got %d lines, want %d", len(got), len(want)+1)
+	}
+	if !strings.Contains(got[0], "A Wide Title") {
+		t.Errorf("line 0 = %q, want the spanning title", got[0])
+	}
+	for i, w := range want {
+		if got[i+1] != w {
+			t.Errorf("line %d = %q, want %q", i+1, got[i+1], w)
+		}
+	}
+}
