@@ -1067,6 +1067,70 @@ type TextLine struct {
 }
 ```
 
+### 段落、区域与矢量图形
+
+```go
+func ExtractPageParagraphs(pdfData []byte, pageIndex int) ([]TextParagraph, error)
+func ExtractAllPagesParagraphs(pdfData []byte) (map[int][]TextParagraph, error)
+func ExtractTextInRect(pdfData []byte, pageIndex int, clip ClipRect) (string, error)
+func ExtractTextWordsInRect(pdfData []byte, pageIndex int, clip ClipRect) ([]TextWord, error)
+func WordsInRect(words []TextWord, clip ClipRect) []TextWord
+func ExtractPageDrawings(pdfData []byte, pageIndex int) ([]Drawing, error)
+func ExtractDrawingsFromFile(path string, pageIndex int) ([]Drawing, error)
+```
+
+- `ExtractPageParagraphs` — 最高层的文本 API：将阅读顺序的文本行重新合并为段落。换行以空格连接，断词连字符直接拼接（`"transduc-" + "tion"` → `"transduction"`），首行缩进与句末标点开启新段落。
+- `ExtractTextInRect` / `ExtractTextWordsInRect` — 按区域提取；坐标为视觉页面点（自上而下，遵循 `/Rotate`）。
+- `ExtractPageDrawings` — 矢量图形提取：直线、折线、矩形与贝塞尔曲线（已扁平化），含描边/填充颜色（RGB 与 DeviceCMYK）、线宽与绘制算符。遍历表单 XObject 并遵循 `/Rotate`。
+
+### 带选项的文本搜索
+
+```go
+func SearchTextWithOptions(pdfData []byte, query string, opt SearchOptions) ([]TextSearchResult, error)
+func SearchTextOnPageWithOptions(pdfData []byte, pageIndex int, query string, opt SearchOptions) ([]TextSearchResult, error)
+
+type SearchOptions struct {
+    CaseInsensitive bool
+    Dehyphenate     bool // 跨连字符换行匹配
+}
+```
+
+`Dehyphenate: true` 时，搜索 "computational" 可匹配跨行断词 `"computa-"` / `"tional"`；返回的矩形为匹配起始行所在位置。
+
+### 文档元数据（读取）
+
+```go
+func GetPDFInfo(pdfData []byte) (PdfInfo, error)
+func GetPDFInfoFromFile(path string) (PdfInfo, error)
+```
+
+读取 `/Info` 字典：标题、作者、主题、关键词、创建者、生产者、创建/修改日期。写入侧为 `SetInfo(PdfInfo)`。
+
+### 已有 PDF 的目录（读取）
+
+```go
+func ExtractTOC(pdfData []byte) ([]TOCEntry, error)
+func ExtractTOCFromFile(path string) ([]TOCEntry, error)
+
+type TOCEntry struct {
+    Level int     // 层级（1 = 顶层）
+    Title string
+    Page  int     // 1-based 目标页码（无法解析时为 0）
+    Y     float64 // 目标位置（距页面顶部的点数）
+}
+```
+
+遍历已有 PDF 的书签树。（写入侧为 GoPdf 实例上的 `SetTOC` / `AddOutline` / `GetTOC`。）
+
+### 区域渲染
+
+```go
+opt := gopdf.RenderOption{DPI: 150, Clip: &gopdf.ClipRect{X: 100, Y: 100, W: 200, H: 120}}
+img, err := gopdf.RenderPageToImage(data, 0, opt)
+```
+
+`Clip` 将渲染限制在页面的一个区域内（视觉点坐标）；渲染遵循 `/Rotate`（输出画布与视觉页面方向一致，并应用 2 倍超采样以保证细线保真度）。
+
 ---
 
 ## 图片提取

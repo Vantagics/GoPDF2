@@ -4,6 +4,7 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -160,4 +161,80 @@ func TestClipRender(t *testing.T) {
 		t.Errorf("clip render = %dx%d, want 200x150", pb.Dx(), pb.Dy())
 	}
 	_ = image.Rect
+}
+
+// TestSearchDehyphenated verifies search across hyphenated line wraps.
+func TestSearchDehyphenated(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf")
+	pdf.SetFont("lib", "", 12)
+	pdf.AddPage()
+	pdf.SetXY(50, 60)
+	_ = pdf.Cell(nil, "The model avoids recurrent computa-")
+	pdf.SetXY(50, 76)
+	_ = pdf.Cell(nil, "tional bottlenecks entirely.")
+	path := filepath.Join(t.TempDir(), "dehyph.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+
+	// without dehyphenation: no match
+	plain, err := SearchTextOnPageWithOptions(data, 0, "computational", SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plain) != 0 {
+		t.Errorf("plain search found %d matches, want 0", len(plain))
+	}
+	// with dehyphenation: one match on the first line
+	deh, err := SearchTextOnPageWithOptions(data, 0, "computational", SearchOptions{Dehyphenate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deh) != 1 {
+		t.Fatalf("dehyphenated search found %d matches, want 1", len(deh))
+	}
+	if deh[0].Y > 70 { // first line's top is near y=52..64
+		t.Errorf("match line Y = %.1f, want on the first line", deh[0].Y)
+	}
+}
+
+// TestFormatBlocksParagraphs verifies FormatBlocks breaks on indentation
+// and merges wrapped lines.
+func TestFormatBlocksParagraphs(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf")
+	pdf.SetFont("lib", "", 11)
+	pdf.AddPage()
+	pdf.SetXY(50, 60)
+	_ = pdf.Cell(nil, "First paragraph wrapped onto")
+	pdf.SetXY(50, 76)
+	_ = pdf.Cell(nil, "a second line here.")
+	pdf.SetXY(66, 100) // indented start of the next paragraph
+	_ = pdf.Cell(nil, "Second paragraph begins indented.")
+	path := filepath.Join(t.TempDir(), "blocks.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	v, err := ExtractTextFormatted(data, 0, FormatBlocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, ok := v.([]TextBlock)
+	if !ok || len(blocks) != 2 {
+		for i, b := range blocks {
+			t.Logf("block %d: %q", i, b.Lines[0].Text)
+		}
+		t.Fatalf("got %d blocks, want 2", len(blocks))
+	}
+	if len(blocks[0].Lines) != 2 {
+		t.Errorf("block 0 has %d lines, want 2 (wrapped merge)", len(blocks[0].Lines))
+	}
+	if !strings.Contains(blocks[1].Lines[0].Text, "Second paragraph") {
+		t.Errorf("block 1 = %q", blocks[1].Lines[0].Text)
+	}
 }
