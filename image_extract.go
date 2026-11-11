@@ -32,6 +32,11 @@ func ExtractImagesFromPage(pdfData []byte, pageIndex int) ([]ExtractedImage, err
 	if err != nil {
 		return nil, err
 	}
+	return extractImagesWithParser(parser, pageIndex)
+}
+
+// extractImagesWithParser extracts image placements using an existing parser.
+func extractImagesWithParser(parser *rawPDFParser, pageIndex int) ([]ExtractedImage, error) {
 	if pageIndex < 0 || pageIndex >= len(parser.pages) {
 		return nil, fmt.Errorf("page index %d out of range (0..%d)", pageIndex, len(parser.pages)-1)
 	}

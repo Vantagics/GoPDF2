@@ -44,6 +44,11 @@ func ExtractPageDrawings(pdfData []byte, pageIndex int) ([]Drawing, error) {
 	if err != nil {
 		return nil, err
 	}
+	return extractDrawingsWithParser(parser, pageIndex)
+}
+
+// extractDrawingsWithParser extracts vector graphics using an existing parser.
+func extractDrawingsWithParser(parser *rawPDFParser, pageIndex int) ([]Drawing, error) {
 	if pageIndex < 0 || pageIndex >= len(parser.pages) {
 		return nil, fmt.Errorf("page index %d out of range (0..%d)", pageIndex, len(parser.pages)-1)
 	}

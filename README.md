@@ -37,6 +37,7 @@ Requires Go 1.13+.
 - **Page layout & page mode** — control viewer display via `SetPageLayout` / `SetPageMode`
 - **Document statistics** — inspect document structure via `GetDocumentStats` / `GetFonts`
 - **TOC / Bookmarks** — read and write hierarchical outline trees via `GetTOC` / `SetTOC`
+- **Document handle** — parse once, query many via `OpenPDFDocument`: `Lines` / `Paragraphs` / `Words` / `Drawings` / `Tables` / `Images` / `Search` / `Info` / `TOC` with per-page caching (up to 40× faster than repeated package-level calls)
 - **Text extraction** — extract text with positions from existing PDFs via `ExtractTextFromPage` / `ExtractPageText`; position-aware line reconstruction via `ExtractPageLines` / `GroupIntoTextLines` (per-glyph Tj streams, kerned spaces, ligatures, ObjStm PDFs, predefined CMaps and legacy GBK/Big5/Shift-JIS/EUC encodings); column-aware reading order for two-column pages; paragraph reconstruction with hyphenation joins via `ExtractPageParagraphs`; region-scoped text via `ExtractTextInRect` / `ExtractTextWordsInRect`
 - **Vector graphics extraction** — lines, polylines, rects and curves with stroke/fill colors and widths via `ExtractPageDrawings`
 - **Table detection** — detect ruled tables and extract their cell text via `ExtractTablesFromPage` (grid from border lines, filled from position-aware words)

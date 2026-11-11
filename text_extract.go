@@ -59,6 +59,12 @@ func extractTextRawPage(pdfData []byte, pageIndex int) ([]ExtractedText, error) 
 	if err != nil {
 		return nil, err
 	}
+	return extractRunsWithParser(parser, pageIndex)
+}
+
+// extractRunsWithParser extracts raw runs for a page using an existing
+// parser (no re-parse).
+func extractRunsWithParser(parser *rawPDFParser, pageIndex int) ([]ExtractedText, error) {
 	if pageIndex < 0 || pageIndex >= len(parser.pages) {
 		return nil, fmt.Errorf("page index %d out of range (0..%d)", pageIndex, len(parser.pages)-1)
 	}

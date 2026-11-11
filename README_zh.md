@@ -37,6 +37,7 @@ GoPDF2 是一个用 Go 编写的 PDF 生成库。基于 [gopdf](https://github.c
 - **页面布局与页面模式** — 通过 `SetPageLayout` / `SetPageMode` 控制阅读器显示方式
 - **文档统计** — 通过 `GetDocumentStats` / `GetFonts` 查看文档结构信息
 - **目录/书签** — 通过 `GetTOC` / `SetTOC` 读写层级化的大纲书签树
+- **文档句柄** — `OpenPDFDocument` 一次解析、多次查询：`Lines` / `Paragraphs` / `Words` / `Drawings` / `Tables` / `Images` / `Search` / `Info` / `TOC`（按页缓存，比重复调用包级函数快最多 40 倍）
 - **文本提取** — 通过 `ExtractTextFromPage` / `ExtractPageText` 从已有 PDF 中提取带位置信息的文本；`ExtractPageLines` / `GroupIntoTextLines` 按位置重建单词与行（支持逐字形 Tj 流、字距空格、连字、对象流 ObjStm、预定义 CMap 及 GBK/Big5/Shift-JIS/EUC 传统编码）；双栏页面按栏序输出；`ExtractPageParagraphs` 重建段落（自动合并换行与断词连字符）；`ExtractTextInRect` / `ExtractTextWordsInRect` 按区域提取
 - **矢量图形提取** — `ExtractPageDrawings` 提取直线、折线、矩形与贝塞尔曲线及其描边/填充颜色与线宽
 - **表格检测** — `ExtractTablesFromPage` 检测有边框表格并提取单元格文本（由边框线聚类成网格、按位置填充文字）

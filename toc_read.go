@@ -41,16 +41,21 @@ func ExtractTOC(pdfData []byte) ([]TOCEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	return extractTOCWithParser(parser), nil
+}
+
+// extractTOCWithParser reads the outline tree using an existing parser.
+func extractTOCWithParser(parser *rawPDFParser) []TOCEntry {
 	if parser.root <= 0 {
-		return nil, nil
+		return nil
 	}
 	rootObj, ok := parser.objects[parser.root]
 	if !ok {
-		return nil, nil
+		return nil
 	}
 	outlinesRef := extractRef(rootObj.dict, "/Outlines")
 	if outlinesRef <= 0 {
-		return nil, nil
+		return nil
 	}
 	// page obj number -> 1-based page index
 	pageIndex := make(map[int]int, len(parser.pages))
@@ -88,7 +93,7 @@ func ExtractTOC(pdfData []byte) ([]TOCEntry, error) {
 		}
 	}
 	walk(outlinesRef, 1)
-	return entries, nil
+	return entries
 }
 
 // ExtractTOCFromFile reads the outline tree from a PDF file.
