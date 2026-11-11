@@ -166,7 +166,7 @@ func (gp *GoPdf) InsertHTMLBox(x, y, w, h float64, htmlStr string, opt HTMLBoxOp
 func (gp *GoPdf) InsertHTMLPaginated(x, y, w float64, htmlStr string, opt HTMLBoxOption) (float64, error)
 ```
 
-将 HTML 内容渲染到 PDF 页面的指定矩形区域内。`InsertHTMLBox` 在盒子高度处截断内容（旧行为）；`InsertHTMLPaginated` 让内容自动跨页流动——内容超过 `opt.PageBottom` 时自动添加新页并从 `opt.PageTop` 继续渲染，支持表格表头跨页重复（`opt.RepeatTableHeaders`）与 `opt.OnPageBreak` 回调。
+将 HTML 内容渲染到 PDF 页面的指定矩形区域内。`InsertHTMLBox` 在盒子高度处截断内容（旧行为）；`InsertHTMLPaginated` 让内容自动跨页流动——内容超过 `opt.PageBottom` 时自动添加新页并从 `opt.PageTop` 继续渲染，支持表格表头跨页重复（`opt.RepeatTableHeaders`）、`opt.OnPageBreak` 回调，以及 `break-inside: avoid` / `page-break-inside: avoid` 整块防拆分（含嵌套块与段落默认边距的高度估算）。
 
 **参数：** `x, y`（左上角坐标）、`w, h`（区域尺寸）、`htmlStr`（HTML 字符串）、`opt`（渲染选项）。
 

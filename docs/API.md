@@ -188,6 +188,8 @@ headers (`opt.RepeatTableHeaders`) and an `opt.OnPageBreak` callback.
 
 **Table pagination:** `InsertHTMLPaginated` keeps rows joined by rowspan cells together across page breaks (row-group keep-together; oversized groups fall back to row-level breaking) and repeats `<thead>` rows when `RepeatTableHeaders` is set.
 
+**Block keep-together:** blocks styled `break-inside: avoid` / `page-break-inside: avoid` move wholly to the next page when they would straddle a boundary (own lines plus nested blocks are estimated, including default paragraph margins).
+
 **Color formats:** `#RGB`, `#RRGGBB`, `rgb(r,g,b)`, `rgba(r,g,b,a)` (alpha ignored), CSS named colors
 
 **Font size formats:** `12pt`, `16px`, `1.5em`, `150%`, named sizes (small, medium, large, etc.)
