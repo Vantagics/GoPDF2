@@ -93,6 +93,7 @@ type htmlRenderState struct {
 	padBot                             float64
 	padLeft                            float64
 	padRight                           float64
+	pageBreakAvoid                     bool // break-inside/page-break-inside: avoid
 }
 
 // htmlBlockBorder is one side of a block-level border.
@@ -498,6 +499,12 @@ func (r *htmlRenderer) applyCSSProps(css map[string]string, state htmlRenderStat
 			state.bgR, state.bgG, state.bgB = cr, cg, cb
 			state.hasBg = true
 		}
+	}
+	if pbi, ok := css["page-break-inside"]; ok && strings.TrimSpace(pbi) == "avoid" {
+		state.pageBreakAvoid = true
+	}
+	if pbi, ok := css["break-inside"]; ok && strings.TrimSpace(pbi) == "avoid" {
+		state.pageBreakAvoid = true
 	}
 	if b, ok := css["border"]; ok {
 		r.applyBlockBorder(&state.borderT, b)
@@ -1133,6 +1140,39 @@ func (r *htmlRenderer) flowBlock(children []*htmlNode, state htmlRenderState, de
 	// apply block margins
 	if state.marginTop > 0 {
 		r.cursorY += state.marginTop
+	}
+
+	// break-inside: avoid — when the block (own lines plus nested blocks)
+	// would straddle a page break, move the whole block to the next page
+	if state.pageBreakAvoid && r.paginate && (len(frags) > 0 || len(blocks) > 0) {
+		estH := 0.0
+		if len(frags) > 0 {
+			lines := r.layoutLines(frags, r.boxW, state.textIndent)
+			estH += float64(len(lines)) * r.lineHeightOf(state)
+		}
+		estH += state.padTop + state.padBot
+		for _, b := range blocks {
+			if h, err := r.measureWrappedTextHeight(extractHTMLNodeText(b.node), b.state, r.boxW); err == nil {
+				estH += h
+			}
+			// block margins: the ~0.5 em paragraph default is applied at
+			// render time (renderBlock), not in the collected state
+			mt, mb := b.state.marginTop, b.state.marginBot
+			if b.node.Tag == "p" && mt == 0 && mb == 0 {
+				def := b.state.fontSize * 0.5 / r.unitConversion()
+				mt, mb = def, def
+			}
+			estH += mt + mb + b.state.padTop + b.state.padBot
+		}
+		if debugPBAvoid {
+			fmt.Printf("DBG avoid: cursorY=%.1f estH=%.1f limit=%.1f blocks=%d frags=%d\n",
+				r.cursorY, estH, r.boxY+r.boxH, len(blocks), len(frags))
+		}
+		if ok, err := r.ensureVerticalSpace(estH); err != nil {
+			return err
+		} else if !ok {
+			return nil
+		}
 	}
 
 	if err := r.renderTextFragments(frags, state, state.textIndent); err != nil {
@@ -2120,6 +2160,7 @@ func (r *htmlRenderer) renderTable(node *htmlNode, state htmlRenderState) error 
 }
 
 // debugTable enables renderTable diagnostics via GOPDF_DEBUG_TABLE.
+var debugPBAvoid = os.Getenv("GOPDF_DEBUG_PB") != ""
 var debugTable = os.Getenv("GOPDF_DEBUG_TABLE") != ""
 
 // buildTableGrid builds the table cell grid, resolving colspan/rowspan.
@@ -2437,7 +2478,13 @@ func (r *htmlRenderer) tableBorder(node *htmlNode, state htmlRenderState) htmlBo
 		}
 	}
 	if css := r.style.resolve(node); css != nil {
-		if b, ok := css["border"]; ok {
+		if pbi, ok := css["page-break-inside"]; ok && strings.TrimSpace(pbi) == "avoid" {
+		state.pageBreakAvoid = true
+	}
+	if pbi, ok := css["break-inside"]; ok && strings.TrimSpace(pbi) == "avoid" {
+		state.pageBreakAvoid = true
+	}
+	if b, ok := css["border"]; ok {
 			spec.has = true
 			if w, _ := parseCSSBorderWidth(b); w > 0 {
 				spec.width = w / r.unitConversion()
