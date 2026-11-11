@@ -85,16 +85,22 @@ type htmlRenderState struct {
 	marginBot  float64
 	vAlign     int // table cell vertical alignment: Top/Middle/Bottom
 
-	// block-level left border (e.g. blockquote rule, callout accent)
-	borderLeftHas bool
-	borderLeftW   float64
-	borderLeftR   uint8
-	borderLeftG   uint8
-	borderLeftB   uint8
-	borderLeftX   float64 // absolute x of the border line
-	padTop        float64 // block padding, units
-	padBot        float64
-	padLeft       float64
+	// block-level borders (blockquote rules, callout accents, boxes)
+	borderT, borderR, borderB, borderL htmlBlockBorder
+	blockX                             float64 // outer box anchor for top/bottom rules
+	blockW                             float64
+	padTop                             float64 // block padding, units
+	padBot                             float64
+	padLeft                            float64
+	padRight                           float64
+}
+
+// htmlBlockBorder is one side of a block-level border.
+type htmlBlockBorder struct {
+	has     bool
+	w       float64 // units
+	r, g, b uint8
+	x       float64 // absolute anchor for the left/right vertical rules
 }
 
 // htmlRenderer handles the rendering of HTML nodes into the PDF.
@@ -493,12 +499,23 @@ func (r *htmlRenderer) applyCSSProps(css map[string]string, state htmlRenderStat
 			state.hasBg = true
 		}
 	}
-	if bl, ok := css["border-left"]; ok {
-		if w, col, ok2 := parseCSSBorderSide(bl); ok2 {
-			state.borderLeftHas = true
-			state.borderLeftW = w / r.unitConversion()
-			state.borderLeftR, state.borderLeftG, state.borderLeftB = col[0], col[1], col[2]
-		}
+	if b, ok := css["border"]; ok {
+		r.applyBlockBorder(&state.borderT, b)
+		r.applyBlockBorder(&state.borderR, b)
+		r.applyBlockBorder(&state.borderB, b)
+		r.applyBlockBorder(&state.borderL, b)
+	}
+	if b, ok := css["border-top"]; ok {
+		r.applyBlockBorder(&state.borderT, b)
+	}
+	if b, ok := css["border-right"]; ok {
+		r.applyBlockBorder(&state.borderR, b)
+	}
+	if b, ok := css["border-bottom"]; ok {
+		r.applyBlockBorder(&state.borderB, b)
+	}
+	if b, ok := css["border-left"]; ok {
+		r.applyBlockBorder(&state.borderL, b)
 	}
 	if p, ok := css["padding-left"]; ok {
 		if v, ok2 := parseCSSLenPx(p); ok2 {
@@ -506,17 +523,41 @@ func (r *htmlRenderer) applyCSSProps(css map[string]string, state htmlRenderStat
 		}
 	}
 	if p, ok := css["padding"]; ok {
+		// CSS order: top right bottom left (1-4 values)
 		fields := strings.Fields(p)
-		if len(fields) >= 1 {
-			if v, ok2 := parseCSSLenPx(fields[0]); ok2 {
-				state.padTop = v / r.unitConversion()
-				state.padBot = v / r.unitConversion()
+		vals := make([]float64, 0, 4)
+		for _, f := range fields {
+			if v, ok2 := parseCSSLenPx(f); ok2 {
+				vals = append(vals, v/r.unitConversion())
 			}
 		}
-		if len(fields) >= 2 {
-			if v, ok2 := parseCSSLenPx(fields[1]); ok2 {
-				state.padLeft = v / r.unitConversion()
-			}
+		switch len(vals) {
+		case 1:
+			state.padTop, state.padRight, state.padBot, state.padLeft = vals[0], vals[0], vals[0], vals[0]
+		case 2:
+			state.padTop, state.padBot = vals[0], vals[0]
+			state.padRight, state.padLeft = vals[1], vals[1]
+		case 3:
+			state.padTop = vals[0]
+			state.padRight, state.padLeft = vals[1], vals[1]
+			state.padBot = vals[2]
+		case 4:
+			state.padTop, state.padRight, state.padBot, state.padLeft = vals[0], vals[1], vals[2], vals[3]
+		}
+	}
+	if p, ok := css["padding-top"]; ok {
+		if v, ok2 := parseCSSLenPx(p); ok2 {
+			state.padTop = v / r.unitConversion()
+		}
+	}
+	if p, ok := css["padding-right"]; ok {
+		if v, ok2 := parseCSSLenPx(p); ok2 {
+			state.padRight = v / r.unitConversion()
+		}
+	}
+	if p, ok := css["padding-bottom"]; ok {
+		if v, ok2 := parseCSSLenPx(p); ok2 {
+			state.padBot = v / r.unitConversion()
 		}
 	}
 	if fs, ok := css["font-size"]; ok {
@@ -1065,13 +1106,21 @@ func (r *htmlRenderer) flowBlock(children []*htmlNode, state htmlRenderState, de
 		return nil
 	}
 	// block padding: shift the content box inside the block's box and add
-	// vertical padding space; the border-left anchors at the outer edge
-	if state.borderLeftHas {
-		state.borderLeftX = r.boxX + state.borderLeftW*0.5
+	// vertical padding space; borders anchor at the outer box
+	state.blockX = r.boxX
+	state.blockW = r.boxW
+	if state.borderL.has {
+		state.borderL.x = r.boxX + state.borderL.w*0.5
+	}
+	if state.borderR.has {
+		state.borderR.x = r.boxX + r.boxW - state.borderR.w*0.5
 	}
 	if state.padLeft > 0 {
 		r.boxX += state.padLeft
 		r.boxW -= state.padLeft
+	}
+	if state.padRight > 0 {
+		r.boxW -= state.padRight
 	}
 	if state.padTop > 0 {
 		r.cursorY += state.padTop
@@ -1278,17 +1327,44 @@ func (r *htmlRenderer) renderTextLines(lines [][]textFragment, state htmlRenderS
 			}
 		}
 
-		// block-level background: full-width band behind the line
+		// block-level background: band behind the line across the outer
+		// box (background covers padding, CSS-like)
 		if state.hasBg {
+			ox, ow := r.boxX, r.boxW
+			if state.padLeft > 0 {
+				ox -= state.padLeft
+				ow += state.padLeft
+			}
+			if state.padRight > 0 {
+				ow += state.padRight
+			}
 			r.gp.SetFillColor(state.bgR, state.bgG, state.bgB)
-			r.gp.RectFromUpperLeftWithStyle(r.boxX, r.cursorY, r.boxW, lh, "F")
+			r.gp.RectFromUpperLeftWithStyle(ox, r.cursorY, ow, lh, "F")
 		}
-		// block left border: one vertical segment per line band; the
-		// contiguous segments visually form a continuous rule
-		if state.borderLeftHas {
-			r.gp.SetStrokeColor(state.borderLeftR, state.borderLeftG, state.borderLeftB)
-			r.gp.SetLineWidth(state.borderLeftW)
-			r.gp.Line(state.borderLeftX, r.cursorY, state.borderLeftX, r.cursorY+lh)
+		// block borders: left/right as vertical segments per line band (the
+		// contiguous segments form continuous rules); top on the first
+		// line and bottom on the last, spanning the outer box
+		if state.borderL.has || state.borderR.has || state.borderT.has || state.borderB.has {
+			if state.borderL.has {
+				r.gp.SetStrokeColor(state.borderL.r, state.borderL.g, state.borderL.b)
+				r.gp.SetLineWidth(state.borderL.w)
+				r.gp.Line(state.borderL.x, r.cursorY, state.borderL.x, r.cursorY+lh)
+			}
+			if state.borderR.has {
+				r.gp.SetStrokeColor(state.borderR.r, state.borderR.g, state.borderR.b)
+				r.gp.SetLineWidth(state.borderR.w)
+				r.gp.Line(state.borderR.x, r.cursorY, state.borderR.x, r.cursorY+lh)
+			}
+			if state.borderT.has && li == 0 {
+				r.gp.SetStrokeColor(state.borderT.r, state.borderT.g, state.borderT.b)
+				r.gp.SetLineWidth(state.borderT.w)
+				r.gp.Line(state.blockX, r.cursorY+state.borderT.w*0.5, state.blockX+state.blockW, r.cursorY+state.borderT.w*0.5)
+			}
+			if state.borderB.has && li == len(lines)-1 {
+				r.gp.SetStrokeColor(state.borderB.r, state.borderB.g, state.borderB.b)
+				r.gp.SetLineWidth(state.borderB.w)
+				r.gp.Line(state.blockX, r.cursorY+lh-state.borderB.w*0.5, state.blockX+state.blockW, r.cursorY+lh-state.borderB.w*0.5)
+			}
 		}
 
 		// the line band already painted the block background across the
@@ -2375,6 +2451,16 @@ func (r *htmlRenderer) tableBorder(node *htmlNode, state htmlRenderState) htmlBo
 	}
 	_ = state
 	return spec
+}
+
+// applyBlockBorder parses a border shorthand ("4px solid #1a3c6e") into one
+// side of the block state.
+func (r *htmlRenderer) applyBlockBorder(side *htmlBlockBorder, spec string) {
+	if w, col, ok := parseCSSBorderSide(spec); ok {
+		side.has = true
+		side.w = w / r.unitConversion()
+		side.r, side.g, side.b = col[0], col[1], col[2]
+	}
 }
 
 // parseCSSBorderSide parses a border-left shorthand like "4px solid #1a3c6e",

@@ -59,6 +59,10 @@ the best figures since the company was founded in 2019.
 </ul>
 <blockquote style="border-left:3px solid #999; color:#555">“The dashboard
 changed how our team works.” — customer survey, September 2026</blockquote>
+<div style="border:1.5px solid #1a3c6e; padding:8px; background-color:#fffbe8">
+<b>Next quarter</b>: launch the mobile companion app, expand the European
+data center, and complete SOC 2 Type II certification.
+</div>
 <p><img src="test/res/gopher02.png" width="80" style="vertical-align:middle">
 The mascot approves these numbers.</p>`
 	if _, err := pdf.InsertHTMLPaginated(50, 50, 495, html, HTMLBoxOption{

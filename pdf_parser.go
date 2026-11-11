@@ -14,6 +14,7 @@ import (
 var (
 	reObjHeader = regexp.MustCompile(`(\d+)\s+0\s+obj\b`)
 	reRootRef   = regexp.MustCompile(`/Root\s+(\d+)\s+0\s+R`)
+	reInfoRef   = regexp.MustCompile(`/Info\s+(\d+)\s+0\s+R`)
 	reNamedRef  = regexp.MustCompile(`/(\w+)\s+(\d+)\s+0\s+R`)
 	reMediaBox  = regexp.MustCompile(`/MediaBox\s*\[\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\]`)
 )
@@ -29,6 +30,8 @@ type rawPDFParser struct {
 	objects map[int]rawPDFObject // objNum -> object
 	pages   []rawPDFPage
 	root    int // root catalog obj number
+	info    int    // /Info metadata dict obj number (0 = none)
+	infoDict string // inline trailer /Info dict (when not an indirect ref)
 
 	// form caches (per parser instance = per extraction call): form streams
 	// recur on every page (stamps, watermarks) — fonts, nested XObjects and
@@ -611,11 +614,35 @@ func zlibDecompress(data []byte) ([]byte, error) {
 }
 
 func (p *rawPDFParser) findRoot() {
-	// Look for /Root N 0 R in trailer or xref stream
-	m := reRootRef.FindSubmatch(p.data)
-	if m != nil {
-		p.root, _ = strconv.Atoi(string(m[1]))
+	// Look for /Root N 0 R in trailer or xref stream. With incremental
+	// updates the LAST trailer wins; scan trailer keyword occurrences
+	// backwards. Xref-stream PDFs have no "trailer" keyword — fall back to
+	// the first /Root match anywhere (existing behavior).
+	last := -1
+	for pos := 0; ; {
+		i := bytes.Index(p.data[pos:], []byte("trailer"))
+		if i < 0 {
+			break
+		}
+		pos += i
+		last = pos
+		pos += 7
+	}
+	if last >= 0 {
+		seg := p.data[last:]
+		if m := reRootRef.FindSubmatch(seg); m != nil {
+			p.root, _ = strconv.Atoi(string(m[1]))
+		}
+		if m := reInfoRef.FindSubmatch(seg); m != nil {
+			p.info, _ = strconv.Atoi(string(m[1]))
+		} else if i := bytes.Index(seg, []byte("/Info <<")); i >= 0 {
+			// inline /Info dict in the trailer (GoPdf's own writer)
+			p.infoDict = extractDict(seg[i:])
+		}
 		return
+	}
+	if m := reRootRef.FindSubmatch(p.data); m != nil {
+		p.root, _ = strconv.Atoi(string(m[1]))
 	}
 }
 

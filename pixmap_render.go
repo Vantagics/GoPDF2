@@ -19,6 +19,10 @@ type RenderOption struct {
 
 	// Background is the background color. Default: white.
 	Background color.Color
+
+	// Clip restricts rendering to a region of the page, in visual points
+	// (top-down; honoring /Rotate). nil renders the full page.
+	Clip *ClipRect
 }
 
 func (o *RenderOption) defaults() {
@@ -156,9 +160,44 @@ func renderParsedPage(parser *rawPDFParser, pageIndex int, opt RenderOption) (im
 				})
 			}
 		}
-		return out, nil
+		return cropToClip(out, opt), nil
 	}
-	return img, nil
+	return cropToClip(img, opt), nil
+}
+
+// cropToClip restricts the rendered page to opt.Clip (visual points).
+func cropToClip(img *image.RGBA, opt RenderOption) *image.RGBA {
+	if opt.Clip == nil {
+		return img
+	}
+	scale := opt.DPI / 72.0
+	b := img.Bounds()
+	x0 := int(opt.Clip.X * scale)
+	y0 := int(opt.Clip.Y * scale)
+	x1 := int((opt.Clip.X + opt.Clip.W) * scale)
+	y1 := int((opt.Clip.Y + opt.Clip.H) * scale)
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	if x1 > b.Max.X {
+		x1 = b.Max.X
+	}
+	if y1 > b.Max.Y {
+		y1 = b.Max.Y
+	}
+	if x1 <= x0 || y1 <= y0 {
+		return img
+	}
+	out := image.NewRGBA(image.Rect(0, 0, x1-x0, y1-y0))
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			out.SetRGBA(x-x0, y-y0, img.RGBAAt(x, y))
+		}
+	}
+	return out
 }
 
 // rotateImageRGBA returns img rotated clockwise by 90/180/270 degrees.
