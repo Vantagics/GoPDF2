@@ -332,3 +332,25 @@ func trimEmptyRowBands(rows, cols []float64, lines []TextLine) []float64 {
 	}
 	return rows[start : end+1]
 }
+
+// ToCSV renders the table as CSV (comma-separated, quoted per RFC 4180).
+func (t *Table) ToCSV() string {
+	var sb strings.Builder
+	for _, row := range t.Rows {
+		cells := make([]string, 0, len(row))
+		for _, c := range row {
+			cells = append(cells, csvQuote(c.Text))
+		}
+		sb.WriteString(strings.Join(cells, ","))
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// csvQuote quotes a CSV field when it contains separators, quotes or newlines.
+func csvQuote(s string) string {
+	if strings.ContainsAny(s, ",\"\n\r") {
+		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+	}
+	return s
+}

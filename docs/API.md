@@ -1099,7 +1099,10 @@ type Table struct {
     ColCount   int
     Rows       [][]TableCell
 }
+func (t *Table) ToCSV() string
 ```
+
+`ToCSV` renders the detected table as RFC 4180 CSV.
 
 Detects ruled tables (PyMuPDF `find_tables` parity): border lines are grouped into crossing-connected components (each component is a candidate table), clustered into row/column grids, and cells are filled with position-aware words. Coordinates honor `/Rotate`. Borderless tables are not detected — there is no grid to cluster.
 

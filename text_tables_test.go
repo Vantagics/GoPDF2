@@ -88,3 +88,15 @@ func TestExtractTablesShowcase(t *testing.T) {
 		t.Errorf("row 1 = %q", tb.Rows[1][0].Text)
 	}
 }
+
+// TestTableToCSV verifies CSV export with quoting.
+func TestTableToCSV(t *testing.T) {
+	tb := Table{Rows: [][]TableCell{
+		{{Text: "Planet"}, {Text: "Note"}},
+		{{Text: "Mars"}, {Text: `has "moons", two`}},
+	}}
+	want := "Planet,Note\nMars,\"has \"\"moons\"\", two\"\n"
+	if got := tb.ToCSV(); got != want {
+		t.Errorf("ToCSV = %q, want %q", got, want)
+	}
+}
