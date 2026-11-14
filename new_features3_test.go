@@ -186,7 +186,7 @@ func TestPageLabels(t *testing.T) {
 	pdf.SetY(50)
 	pdf.Text("Page i")
 
-	err := pdf.WritePdf("test/out/test_page_labels.pdf")
+	err := pdf.WritePdf(resOutDir + "/test_page_labels.pdf")
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
 	}
@@ -587,14 +587,14 @@ func TestContentElementCRUDWritePDF(t *testing.T) {
 		}
 	}
 
-	os.MkdirAll("test/out", 0755)
-	err := pdf.WritePdf("test/out/test_content_crud.pdf")
+	os.MkdirAll(resOutDir, 0755)
+	err := pdf.WritePdf(resOutDir + "/test_content_crud.pdf")
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
 	}
 
 	// Verify file exists and is non-empty.
-	info, err := os.Stat("test/out/test_content_crud.pdf")
+	info, err := os.Stat(resOutDir + "/test_content_crud.pdf")
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
@@ -632,13 +632,13 @@ func TestGarbageCollectWritePDF(t *testing.T) {
 		t.Error("expected objects to be removed")
 	}
 
-	os.MkdirAll("test/out", 0755)
-	err := pdf.WritePdf("test/out/test_gc_compact.pdf")
+	os.MkdirAll(resOutDir, 0755)
+	err := pdf.WritePdf(resOutDir + "/test_gc_compact.pdf")
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
 	}
 
-	info, err := os.Stat("test/out/test_gc_compact.pdf")
+	info, err := os.Stat(resOutDir + "/test_gc_compact.pdf")
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
@@ -660,14 +660,14 @@ func TestPDFVersionWritePDF(t *testing.T) {
 	pdf.SetY(50)
 	pdf.Text("PDF 2.0 document")
 
-	os.MkdirAll("test/out", 0755)
-	err := pdf.WritePdf("test/out/test_pdf_version.pdf")
+	os.MkdirAll(resOutDir, 0755)
+	err := pdf.WritePdf(resOutDir + "/test_pdf_version.pdf")
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
 	}
 
 	// Read back and check header.
-	data, err := os.ReadFile("test/out/test_pdf_version.pdf")
+	data, err := os.ReadFile(resOutDir + "/test_pdf_version.pdf")
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -720,14 +720,14 @@ func TestXMPMetadata(t *testing.T) {
 	pdf.SetY(50)
 	pdf.Text("Document with XMP metadata")
 
-	os.MkdirAll("test/out", 0755)
-	err := pdf.WritePdf("test/out/test_xmp_metadata.pdf")
+	os.MkdirAll(resOutDir, 0755)
+	err := pdf.WritePdf(resOutDir + "/test_xmp_metadata.pdf")
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
 	}
 
 	// Verify file contains XMP data.
-	data, _ := os.ReadFile("test/out/test_xmp_metadata.pdf")
+	data, _ := os.ReadFile(resOutDir + "/test_xmp_metadata.pdf")
 	content := string(data)
 	if !contains(content, "x:xmpmeta") {
 		t.Error("output PDF does not contain XMP metadata")
@@ -784,8 +784,8 @@ func TestIncrementalSave(t *testing.T) {
 		t.Errorf("result doesn't end with %%%%EOF, tail = %q", tail)
 	}
 
-	os.MkdirAll("test/out", 0755)
-	os.WriteFile("test/out/test_incremental.pdf", result, 0644)
+	os.MkdirAll(resOutDir, 0755)
+	os.WriteFile(resOutDir + "/test_incremental.pdf", result, 0644)
 }
 
 // ============================================================
@@ -824,13 +824,13 @@ func TestClone(t *testing.T) {
 		t.Error("clone has 0 pages")
 	}
 
-	os.MkdirAll("test/out", 0755)
-	err = clone.WritePdf("test/out/test_clone.pdf")
+	os.MkdirAll(resOutDir, 0755)
+	err = clone.WritePdf(resOutDir + "/test_clone.pdf")
 	if err != nil {
 		t.Fatalf("clone WritePdf: %v", err)
 	}
 
-	info, _ := os.Stat("test/out/test_clone.pdf")
+	info, _ := os.Stat(resOutDir + "/test_clone.pdf")
 	if info.Size() == 0 {
 		t.Error("clone PDF is empty")
 	}
@@ -898,8 +898,8 @@ func TestGarbageCollectDedup(t *testing.T) {
 		t.Error("GCDedup should remove at least the deleted objects")
 	}
 
-	os.MkdirAll("test/out", 0755)
-	err := pdf.WritePdf("test/out/test_gc_dedup.pdf")
+	os.MkdirAll(resOutDir, 0755)
+	err := pdf.WritePdf(resOutDir + "/test_gc_dedup.pdf")
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
 	}

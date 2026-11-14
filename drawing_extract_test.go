@@ -118,7 +118,7 @@ func TestDrawingsRotatedPage(t *testing.T) {
 // TestDrawingsOnShowcaseTable verifies the extractor finds the table grid
 // borders of the HTML showcase page.
 func TestDrawingsOnShowcaseTable(t *testing.T) {
-	data, err := readFileBytes("test/out/showcase/showcase.pdf")
+	data, err := readFileBytes(resOutDir + "/showcase/showcase.pdf")
 	if err != nil {
 		t.Skip("showcase not built")
 	}

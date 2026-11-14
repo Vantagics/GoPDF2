@@ -49,7 +49,7 @@ func TestRenderTextRasterization(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	path := "test/out/render_text.pdf"
+	path := resOutDir + "/render_text.pdf"
 	if err := pdf.WritePdf(path); err != nil {
 		t.Fatal(err)
 	}

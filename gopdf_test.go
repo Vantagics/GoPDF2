@@ -50,7 +50,7 @@ func BenchmarkPdfWithImageHolder(b *testing.B) {
 	pdf.SetXY(250, 200)
 	pdf.Cell(nil, "gopher and gopher")
 
-	pdf.WritePdf("./test/out/image_bench.pdf")
+	pdf.WritePdf(resOutDir + "/image_bench.pdf")
 }
 
 func TestPdfWithImageHolder(t *testing.T) {
@@ -90,7 +90,7 @@ func TestPdfWithImageHolder(t *testing.T) {
 	pdf.SetXY(250, 200)
 	pdf.Cell(nil, "gopher and gopher")
 
-	pdf.WritePdf("./test/out/image_test.pdf")
+	pdf.WritePdf(resOutDir + "/image_test.pdf")
 }
 
 func TestPdfWithImageHolderGif(t *testing.T) {
@@ -130,7 +130,7 @@ func TestPdfWithImageHolderGif(t *testing.T) {
 	pdf.SetXY(250, 200)
 	pdf.Cell(nil, "gopher and gopher")
 
-	pdf.WritePdf("./test/out/image_test_gif.pdf")
+	pdf.WritePdf(resOutDir + "/image_test_gif.pdf")
 }
 
 func TestRetrievingNumberOfPdfPage(t *testing.T) {
@@ -177,7 +177,7 @@ func TestRetrievingNumberOfPdfPage(t *testing.T) {
 		return
 	}
 
-	pdf.WritePdf("./test/out/number_of_pages_test.pdf")
+	pdf.WritePdf(resOutDir + "/number_of_pages_test.pdf")
 }
 
 func TestImageCrop(t *testing.T) {
@@ -239,7 +239,7 @@ func TestImageCrop(t *testing.T) {
 		return
 	}
 
-	pdf.WritePdf("./test/out/image_crop.pdf")
+	pdf.WritePdf(resOutDir + "/image_crop.pdf")
 }
 
 func BenchmarkAddTTFFontByReader(b *testing.B) {
@@ -342,11 +342,11 @@ func TestReuseFontData(t *testing.T) {
 		return
 	}
 
-	if err := writeFile("./test/out/result1_by_parsed_ttf_font.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result1_by_parsed_ttf_font.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
-	if err := writeFile("./test/out/result2_by_parsed_ttf_font.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result2_by_parsed_ttf_font.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
@@ -439,7 +439,7 @@ func TestWhiteTransparent(t *testing.T) {
 	}
 
 	//pdf.SetNoCompression()
-	err = pdf.WritePdf("./test/out/white_transparent.pdf")
+	err = pdf.WritePdf(resOutDir + "/white_transparent.pdf")
 	if err != nil {
 		t.Error(err)
 		return
@@ -485,7 +485,7 @@ func TestRectangle(t *testing.T) {
 		return
 	}
 
-	err = pdf.WritePdf("./test/out/rectangle_with_round_corner.pdf")
+	err = pdf.WritePdf(resOutDir + "/rectangle_with_round_corner.pdf")
 	if err != nil {
 		t.Error(err)
 		return
@@ -550,7 +550,7 @@ func TestWhiteTransparent195(t *testing.T) {
 	// }
 
 	pdf.SetNoCompression()
-	err = pdf.WritePdf("./test/out/white_transparent195.pdf")
+	err = pdf.WritePdf(resOutDir + "/white_transparent195.pdf")
 	if err != nil {
 		t.Error(err)
 		return
@@ -606,7 +606,7 @@ func TestClearValue(t *testing.T) {
 	pdf.SetInfo(PdfInfo{
 		Title: "xx",
 	})
-	pdf.WritePdf("./test/out/test_clear_value.pdf")
+	pdf.WritePdf(resOutDir + "/test_clear_value.pdf")
 
 	//reset
 	pdf.Start(Config{PageSize: *PageSizeA4})
@@ -765,7 +765,7 @@ func TestTextColor(t *testing.T) {
 	pdf.Br(20)
 	pdf.Cell(nil, "b")
 
-	err = pdf.WritePdf("./test/out/colored_text.pdf")
+	err = pdf.WritePdf(resOutDir + "/colored_text.pdf")
 	if err != nil {
 		t.Error(err)
 		return
@@ -811,7 +811,7 @@ func TestAddHeaderFooter(t *testing.T) {
 	pdf.SetY(400)
 	pdf.Text("page 2 content")
 
-	err = pdf.WritePdf("./test/out/header_footer.pdf")
+	err = pdf.WritePdf(resOutDir + "/header_footer.pdf")
 	if err != nil {
 		t.Error(err)
 		return
@@ -819,7 +819,7 @@ func TestAddHeaderFooter(t *testing.T) {
 }
 
 func initTesting() error {
-	err := os.MkdirAll("./test/out", 0777)
+	err := os.MkdirAll(resOutDir, 0777)
 	if err != nil {
 		return err
 	}
@@ -844,7 +844,7 @@ func setupDefaultA4PDF(t *testing.T) *GoPdf {
 }
 
 func TestImportPagesFromFile(t *testing.T) {
-	err := os.MkdirAll("./test/out", 0777)
+	err := os.MkdirAll(resOutDir, 0777)
 	if err != nil {
 		t.Error(err)
 		return
@@ -900,7 +900,7 @@ func TestImportPagesFromFile(t *testing.T) {
 		return
 	}
 
-	err = pdf.WritePdf("./test/out/open-existing-pdf.pdf")
+	err = pdf.WritePdf(resOutDir + "/open-existing-pdf.pdf")
 	if err != nil {
 		t.Error(err)
 		return

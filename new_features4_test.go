@@ -48,7 +48,7 @@ func TestScrub_RemovesMetadata(t *testing.T) {
 	}
 
 	// Should still produce valid PDF.
-	err := pdf.WritePdf("test/out/scrubbed.pdf")
+	err := pdf.WritePdf(resOutDir + "/scrubbed.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,13 +102,13 @@ func TestOCG_AddAndList(t *testing.T) {
 	}
 
 	// Should produce valid PDF with OCProperties.
-	err := pdf.WritePdf("test/out/ocg_layers.pdf")
+	err := pdf.WritePdf(resOutDir + "/ocg_layers.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Verify file is non-empty.
-	info, _ := os.Stat("test/out/ocg_layers.pdf")
+	info, _ := os.Stat(resOutDir + "/ocg_layers.pdf")
 	if info.Size() == 0 {
 		t.Error("output PDF is empty")
 	}
@@ -139,7 +139,7 @@ func TestPageLayout_SetAndGet(t *testing.T) {
 		t.Errorf("expected TwoColumnLeft, got %q", pdf.GetPageLayout())
 	}
 
-	err := pdf.WritePdf("test/out/page_layout.pdf")
+	err := pdf.WritePdf(resOutDir + "/page_layout.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestPageMode_SetAndGet(t *testing.T) {
 		t.Errorf("expected UseThumbs, got %q", pdf.GetPageMode())
 	}
 
-	err := pdf.WritePdf("test/out/page_mode.pdf")
+	err := pdf.WritePdf(resOutDir + "/page_mode.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestPageMode_UseOC(t *testing.T) {
 	pdf.AddOCG(OCG{Name: "Layer1", On: true})
 	pdf.SetPageMode(PageModeUseOC)
 
-	err := pdf.WritePdf("test/out/page_mode_oc.pdf")
+	err := pdf.WritePdf(resOutDir + "/page_mode_oc.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestTOC_FlatOutlines(t *testing.T) {
 		t.Errorf("expected 'Chapter 3', got %q", toc[2].Title)
 	}
 
-	err := pdf.WritePdf("test/out/toc_flat.pdf")
+	err := pdf.WritePdf(resOutDir + "/toc_flat.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestTOC_SetFlat(t *testing.T) {
 		t.Errorf("expected 'Introduction', got %q", toc[0].Title)
 	}
 
-	err = pdf.WritePdf("test/out/toc_set_flat.pdf")
+	err = pdf.WritePdf(resOutDir + "/toc_set_flat.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestTOC_SetHierarchical(t *testing.T) {
 		t.Fatalf("expected at least 3 TOC items, got %d", len(toc))
 	}
 
-	err = pdf.WritePdf("test/out/toc_hierarchical.pdf")
+	err = pdf.WritePdf(resOutDir + "/toc_hierarchical.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,12 +451,12 @@ func TestAllNewFeatures4_Combined(t *testing.T) {
 		t.Error("should have XMP metadata")
 	}
 
-	err = pdf.WritePdf("test/out/all_features4.pdf")
+	err = pdf.WritePdf(resOutDir + "/all_features4.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	info, _ := os.Stat("test/out/all_features4.pdf")
+	info, _ := os.Stat(resOutDir + "/all_features4.pdf")
 	if info.Size() == 0 {
 		t.Error("output PDF is empty")
 	}

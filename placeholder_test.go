@@ -56,7 +56,7 @@ func TestPlaceHolderText(t *testing.T) {
 		return
 	}
 
-	pdf.WritePdf("./test/out/placeholder_text.pdf")
+	pdf.WritePdf(resOutDir + "/placeholder_text.pdf")
 }
 
 func TestPlaceHolderText2(t *testing.T) {
@@ -124,5 +124,5 @@ func TestPlaceHolderText2(t *testing.T) {
 		return
 	}
 
-	pdf.WritePdf("./test/out/placeholder_text_2.pdf")
+	pdf.WritePdf(resOutDir + "/placeholder_text_2.pdf")
 }

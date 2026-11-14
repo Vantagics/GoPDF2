@@ -63,7 +63,7 @@ func TestExtractTablesGenerated(t *testing.T) {
 // TestExtractTablesShowcase verifies detection on the HTML-rendered table of
 // the showcase document.
 func TestExtractTablesShowcase(t *testing.T) {
-	data, err := readFileBytes("test/out/showcase/showcase.pdf")
+	data, err := readFileBytes(resOutDir + "/showcase/showcase.pdf")
 	if err != nil {
 		t.Skip("showcase not built")
 	}

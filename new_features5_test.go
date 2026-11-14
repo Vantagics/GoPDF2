@@ -31,7 +31,7 @@ func TestExtractTextFromPage_SelfGenerated(t *testing.T) {
 	pdf.SetY(100)
 	pdf.Cell(nil, "Second line of text")
 
-	outPath := "test/out/test_text_extract.pdf"
+	outPath := resOutDir + "/test_text_extract.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestExtractTextFromAllPages(t *testing.T) {
 	pdf.SetY(50)
 	pdf.Cell(nil, "Page Two Content")
 
-	outPath := "test/out/test_text_extract_multi.pdf"
+	outPath := resOutDir + "/test_text_extract_multi.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestExtractPageText_Convenience(t *testing.T) {
 	pdf.SetY(50)
 	pdf.Cell(nil, "Convenience extraction test")
 
-	outPath := "test/out/test_text_extract_conv.pdf"
+	outPath := resOutDir + "/test_text_extract_conv.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestExtractTextFromPage_InvalidPage(t *testing.T) {
 	pdf := &GoPdf{}
 	pdf.Start(Config{PageSize: *PageSizeA4})
 	pdf.AddPage()
-	outPath := "test/out/test_text_extract_invalid.pdf"
+	outPath := resOutDir + "/test_text_extract_invalid.pdf"
 	pdf.WritePdf(outPath)
 
 	data, _ := os.ReadFile(outPath)
@@ -170,7 +170,7 @@ func TestExtractImagesFromPage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outPath := "test/out/test_image_extract.pdf"
+	outPath := resOutDir + "/test_image_extract.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestExtractImagesFromAllPages(t *testing.T) {
 	pdf.AddPage()
 	pdf.Image("test/res/gopher02.png", 50, 50, &Rect{W: 100, H: 100})
 
-	outPath := "test/out/test_image_extract_multi.pdf"
+	outPath := resOutDir + "/test_image_extract_multi.pdf"
 	err := pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestExtractImagesFromPage_InvalidPage(t *testing.T) {
 	pdf := &GoPdf{}
 	pdf.Start(Config{PageSize: *PageSizeA4})
 	pdf.AddPage()
-	outPath := "test/out/test_image_extract_invalid.pdf"
+	outPath := resOutDir + "/test_image_extract_invalid.pdf"
 	pdf.WritePdf(outPath)
 
 	data, _ := os.ReadFile(outPath)
@@ -264,7 +264,7 @@ func TestAddTextField(t *testing.T) {
 		t.Errorf("expected field name 'username', got %q", fields[0].Name)
 	}
 
-	outPath := "test/out/test_form_textfield.pdf"
+	outPath := resOutDir + "/test_form_textfield.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestAddCheckbox(t *testing.T) {
 		t.Error("expected checkbox to be checked")
 	}
 
-	outPath := "test/out/test_form_checkbox.pdf"
+	outPath := resOutDir + "/test_form_checkbox.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -328,7 +328,7 @@ func TestAddDropdown(t *testing.T) {
 		t.Errorf("expected 3 options, got %d", len(fields[0].Options))
 	}
 
-	outPath := "test/out/test_form_dropdown.pdf"
+	outPath := resOutDir + "/test_form_dropdown.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -395,7 +395,7 @@ func TestAddFormField_MultipleFields(t *testing.T) {
 		t.Fatalf("expected 4 form fields, got %d", len(fields))
 	}
 
-	outPath := "test/out/test_form_multi.pdf"
+	outPath := resOutDir + "/test_form_multi.pdf"
 	err := pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -435,7 +435,7 @@ func TestRawPDFParser_BasicParse(t *testing.T) {
 	pdf.Start(Config{PageSize: *PageSizeA4})
 	pdf.AddPage()
 
-	outPath := "test/out/test_parser_basic.pdf"
+	outPath := resOutDir + "/test_parser_basic.pdf"
 	err := pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -467,7 +467,7 @@ func TestRawPDFParser_MultiPage(t *testing.T) {
 	pdf.AddPage()
 	pdf.AddPage()
 
-	outPath := "test/out/test_parser_multi.pdf"
+	outPath := resOutDir + "/test_parser_multi.pdf"
 	pdf.WritePdf(outPath)
 
 	data, _ := os.ReadFile(outPath)

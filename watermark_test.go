@@ -26,10 +26,10 @@ func TestWatermarkExplicitOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pdf.WritePdf("test/out/wm_explicit.pdf"); err != nil {
+	if err := pdf.WritePdf(resOutDir + "/wm_explicit.pdf"); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile("test/out/wm_explicit.pdf")
+	data, _ := os.ReadFile(resOutDir + "/wm_explicit.pdf")
 	parser, perr := newRawPDFParser(data)
 	if perr != nil {
 		t.Fatal(perr)
@@ -71,7 +71,7 @@ func TestWatermarkAllPages(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	path := "test/out/wm_all.pdf"
+	path := resOutDir + "/wm_all.pdf"
 	if err := pdf.WritePdf(path); err != nil {
 		t.Fatal(err)
 	}

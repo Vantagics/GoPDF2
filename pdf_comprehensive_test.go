@@ -339,7 +339,7 @@ func TestComprehensive_OpenAndOverlayText(t *testing.T) {
 	}
 
 	// Save
-	outPath := "test/out/comprehensive_overlay.pdf"
+	outPath := resOutDir + "/comprehensive_overlay.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -381,7 +381,7 @@ func TestComprehensive_OpenAndAddAnnotations(t *testing.T) {
 		t.Fatalf("expected at least 2 annotations, got %d", len(annots))
 	}
 
-	outPath := "test/out/comprehensive_annotations.pdf"
+	outPath := resOutDir + "/comprehensive_annotations.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -405,7 +405,7 @@ func TestComprehensive_OpenAndAddBookmarks(t *testing.T) {
 		pdf.AddOutline("Bookmark for Page " + string(rune('0'+i)))
 	}
 
-	outPath := "test/out/comprehensive_bookmarks.pdf"
+	outPath := resOutDir + "/comprehensive_bookmarks.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -447,7 +447,7 @@ func TestComprehensive_OpenAndEmbedFile(t *testing.T) {
 		t.Fatal("embedded file content mismatch")
 	}
 
-	outPath := "test/out/comprehensive_embedded.pdf"
+	outPath := resOutDir + "/comprehensive_embedded.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -481,7 +481,7 @@ func TestComprehensive_OpenAndSetMetadata(t *testing.T) {
 		t.Fatalf("unexpected title: %s", meta.Title)
 	}
 
-	outPath := "test/out/comprehensive_metadata.pdf"
+	outPath := resOutDir + "/comprehensive_metadata.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -503,7 +503,7 @@ func TestComprehensive_ExtractPages(t *testing.T) {
 		t.Fatalf("expected 2 pages, got %d", result.GetNumberOfPages())
 	}
 
-	outPath := "test/out/comprehensive_extract_pages.pdf"
+	outPath := resOutDir + "/comprehensive_extract_pages.pdf"
 	err = result.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -540,7 +540,7 @@ func TestComprehensive_SelectPages(t *testing.T) {
 		t.Fatalf("expected 3 pages, got %d", result.GetNumberOfPages())
 	}
 
-	outPath := "test/out/comprehensive_select_reversed.pdf"
+	outPath := resOutDir + "/comprehensive_select_reversed.pdf"
 	err = result.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -580,7 +580,7 @@ func TestComprehensive_MergePages(t *testing.T) {
 		t.Fatalf("expected 6 pages after merge, got %d", result.GetNumberOfPages())
 	}
 
-	outPath := "test/out/comprehensive_merged.pdf"
+	outPath := resOutDir + "/comprehensive_merged.pdf"
 	err = result.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -642,7 +642,7 @@ func TestComprehensive_DeletePage(t *testing.T) {
 		t.Fatalf("expected %d pages after delete, got %d", before-1, after)
 	}
 
-	outPath := "test/out/comprehensive_deleted_page.pdf"
+	outPath := resOutDir + "/comprehensive_deleted_page.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -682,7 +682,7 @@ func TestComprehensive_WatermarkText(t *testing.T) {
 		t.Fatalf("AddWatermarkText: %v", err)
 	}
 
-	outPath := "test/out/comprehensive_watermark.pdf"
+	outPath := resOutDir + "/comprehensive_watermark.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -714,7 +714,7 @@ func TestComprehensive_WatermarkAllPages(t *testing.T) {
 		t.Fatalf("AddWatermarkTextAllPages: %v", err)
 	}
 
-	outPath := "test/out/comprehensive_watermark_all.pdf"
+	outPath := resOutDir + "/comprehensive_watermark_all.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -779,7 +779,7 @@ func TestComprehensive_RoundTrip(t *testing.T) {
 	}
 
 	// Step 7: Save to file and verify it's a valid PDF
-	outPath := "test/out/comprehensive_roundtrip.pdf"
+	outPath := resOutDir + "/comprehensive_roundtrip.pdf"
 	err = os.WriteFile(outPath, outBytes, 0644)
 	if err != nil {
 		t.Fatalf("write file: %v", err)
@@ -944,7 +944,7 @@ func TestComprehensive_CreateFromScratch(t *testing.T) {
 	})
 
 	// Save
-	outPath := "test/out/comprehensive_from_scratch.pdf"
+	outPath := resOutDir + "/comprehensive_from_scratch.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)
@@ -1030,7 +1030,7 @@ func TestComprehensive_FullPipeline(t *testing.T) {
 	}
 
 	// 10. Save
-	outPath := "test/out/comprehensive_pipeline.pdf"
+	outPath := resOutDir + "/comprehensive_pipeline.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatalf("WritePdf: %v", err)

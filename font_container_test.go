@@ -74,11 +74,11 @@ func TestFontContainer_ReuseFontData(t *testing.T) {
 		return
 	}
 
-	if err := writeFile("./test/out/result1_by_parsed_ttf_font_with_font_container.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result1_by_parsed_ttf_font_with_font_container.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
-	if err := writeFile("./test/out/result2_by_parsed_ttf_font_with_font_container.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result2_by_parsed_ttf_font_with_font_container.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
@@ -124,11 +124,11 @@ func TestFontContainer_CompareAddTTFFontData(t *testing.T) {
 		return
 	}
 
-	if err := writeFile("./test/out/result1_font_container_compare_add_ttf_font_data.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result1_font_container_compare_add_ttf_font_data.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
-	if err := writeFile("./test/out/result2_font_container_compare_add_ttf_font_data.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result2_font_container_compare_add_ttf_font_data.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
@@ -161,11 +161,11 @@ func TestFontContainer_CompareAddTTFFont(t *testing.T) {
 		return
 	}
 
-	if err := writeFile("./test/out/result1_font_container_compare_add_ttf_font.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result1_font_container_compare_add_ttf_font.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
-	if err := writeFile("./test/out/result2_font_container_compare_add_ttf_font.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result2_font_container_compare_add_ttf_font.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
@@ -212,11 +212,11 @@ func TestFontContainer_CompareAddTTFFontByReader(t *testing.T) {
 		return
 	}
 
-	if err := writeFile("./test/out/result1_font_container_compare_add_ttf_font_by_reader.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result1_font_container_compare_add_ttf_font_by_reader.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
-	if err := writeFile("./test/out/result2_font_container_compare_add_ttf_font_by_reader.pdf", rst1, 0644); err != nil {
+	if err := writeFile(resOutDir + "/result2_font_container_compare_add_ttf_font_by_reader.pdf", rst1, 0644); err != nil {
 		t.Error(err)
 		return
 	}
