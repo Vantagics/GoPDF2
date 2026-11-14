@@ -69,4 +69,4 @@ test/debug.test
 .idea
 .scannerwork
 
-*.pdf
+*.pdfsuite_out.txt
