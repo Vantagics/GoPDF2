@@ -70,3 +70,14 @@ test/debug.test
 .scannerwork
 
 *.pdfsuite_out.txt
+
+# generated test artifacts (timestamped outputs)
+test/pagination/page_image-*.pdf
+test/pagination/page_setnew*.pdf
+test/pagination/page_sety-*.pdf
+examples/outline_example/outline_demo_1*.pdf
+showcase.pdf
+showcase_*.pdf
+test.pdf
+GoPDF2.test.exe
+suite_out.txt
