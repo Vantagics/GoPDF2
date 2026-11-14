@@ -1,0 +1,13 @@
+# Binary assets must never go through eol normalization: PDF xref tables and
+# font tables carry byte offsets that break when git rewrites line endings.
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.ico   binary
+*.zip   binary
