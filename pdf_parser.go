@@ -951,19 +951,16 @@ func (p *rawPDFParser) getPageContentStream(pageIdx int) []byte {
 
 // ExtractedText represents a piece of text extracted from a PDF page.
 type ExtractedText struct {
-	// Text is the extracted text string.
-	Text string
-	// X is the horizontal position.
-	X float64
-	// Y is the vertical position.
-	Y float64
-	// FontName is the PDF font resource name (e.g. "/F1").
-	FontName string
-	// FontSize is the font size in points.
-	FontSize float64
-	// Width is the estimated advance width of the text (set by MergeTextRuns
-	// and GroupIntoTextLines; 0 when unknown).
-	Width float64
+	Text     string  // The extracted text string
+	X        float64 // Horizontal position
+	Y        float64 // Vertical position
+	FontName string  // PDF font resource name (e.g. "/F1")
+	FontSize float64 // Font size in points
+	Width    float64 // Estimated advance width (set by MergeTextRuns; 0 when unknown)
+	// Color is the fill color the text was painted with (0-255 RGB).
+	ColorR, ColorG, ColorB uint8
+	// FontFlags bit 1 = bold, bit 2 = italic, detected from the font name.
+	FontFlags int
 }
 
 // ExtractedImage represents an image found on a PDF page.

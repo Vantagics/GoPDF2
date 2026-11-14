@@ -265,3 +265,29 @@ func (d *PDFDoc) searchDehyphenated(pageIndex int, query string, caseInsensitive
 func (d *PDFDoc) extractTOC() []TOCEntry {
 	return extractTOCWithParser(d.parser)
 }
+
+// PageSize returns the visual size of a page in points, honoring /Rotate
+// (width and height swap for 90/270).
+func (d *PDFDoc) PageSize(pageIndex int) (PageInfo, error) {
+	if err := d.checkPage(pageIndex); err != nil {
+		return PageInfo{}, err
+	}
+	page := d.parser.pages[pageIndex]
+	w := page.mediaBox[2] - page.mediaBox[0]
+	h := page.mediaBox[3] - page.mediaBox[1]
+	if page.rotate == 90 || page.rotate == 270 {
+		w, h = h, w
+	}
+	return PageInfo{Width: w, Height: h, PageNumber: pageIndex + 1}, nil
+}
+
+// PageSizes returns the visual sizes of all pages (1-based PageNumber).
+func (d *PDFDoc) PageSizes() []PageInfo {
+	out := make([]PageInfo, 0, len(d.parser.pages))
+	for i := range d.parser.pages {
+		if pi, err := d.PageSize(i); err == nil {
+			out = append(out, pi)
+		}
+	}
+	return out
+}

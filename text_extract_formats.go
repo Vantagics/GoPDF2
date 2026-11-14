@@ -56,6 +56,10 @@ type TextWord struct {
 	FontName string
 	// FontSize is the font size.
 	FontSize float64
+	// Color is the fill color the word was painted with (0-255 RGB).
+	ColorR, ColorG, ColorB uint8
+	// Flags bit 1 = bold, bit 2 = italic (detected from the font name).
+	Flags int
 }
 
 // textExtractionJSON is the JSON output structure.

@@ -238,3 +238,96 @@ func TestFormatBlocksParagraphs(t *testing.T) {
 		t.Errorf("block 1 = %q", blocks[1].Lines[0].Text)
 	}
 }
+
+// TestStyledTextExtraction verifies color and font-style flags survive
+// extraction: colored text reports its RGB, and a corpus heading detected
+// as bold by font name.
+func TestStyledTextExtraction(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf")
+	pdf.SetFont("lib", "", 12)
+	pdf.AddPage()
+	pdf.SetTextColor(220, 40, 40)
+	pdf.SetXY(50, 60)
+	_ = pdf.Cell(nil, "Red styled words")
+	pdf.SetTextColor(0, 0, 0)
+	pdf.SetXY(50, 100)
+	_ = pdf.Cell(nil, "Plain black words")
+	path := filepath.Join(t.TempDir(), "styled.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+
+	words, err := ExtractTextWordsInRect(data, 0, ClipRect{X: 0, Y: 0, W: 595, H: 90})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(words) == 0 || words[0].Text != "Red" {
+		for _, w := range words {
+			t.Logf("w %q", w.Text)
+		}
+		t.Fatalf("styled words missing")
+	}
+	if words[0].ColorR != 220 || words[0].ColorG != 40 || words[0].ColorB != 40 {
+		t.Errorf("color = %v %v %v, want 220/40/40", words[0].ColorR, words[0].ColorG, words[0].ColorB)
+	}
+	// black words later on the page
+	plain, err := ExtractTextWordsInRect(data, 0, ClipRect{X: 0, Y: 90, W: 595, H: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plain) == 0 || plain[0].ColorR != 0 || plain[0].ColorG != 0 || plain[0].ColorB != 0 {
+		t.Errorf("plain color = %v", plain[0])
+	}
+}
+
+// TestArxivBoldFlags verifies bold detection from font names on the real
+// corpus (the Introduction heading is typeset bold).
+func TestArxivBoldFlags(t *testing.T) {
+	data := corpusData(t, "arxiv_1706.03762.pdf")
+	words, err := ExtractTextWordsInRect(data, 1, ClipRect{X: 0, Y: 0, W: 842, H: 900})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bold := 0
+	for _, w := range words {
+		if w.Flags&1 != 0 {
+			bold++
+		}
+	}
+	if bold == 0 {
+		t.Errorf("no bold words detected on arXiv page 1")
+	}
+}
+
+// TestPDFDocPageSize verifies visual page sizes honor /Rotate.
+func TestPDFDocPageSize(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	pdf.AddPage()
+	if err := pdf.SetPageRotation(1, 90); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "size.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	doc, err := OpenPDFDocument(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pi, err := doc.PageSize(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pi.Width != 842 || pi.Height != 595 {
+		t.Errorf("size = %.0fx%.0f, want 842x595 (rotated A4)", pi.Width, pi.Height)
+	}
+	sizes := doc.PageSizes()
+	if len(sizes) != 1 || sizes[0].Width != 842 {
+		t.Errorf("PageSizes = %+v", sizes)
+	}
+}
