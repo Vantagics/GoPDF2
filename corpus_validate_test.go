@@ -13,6 +13,9 @@ import (
 func TestCorpus_AllExtractionAPIs(t *testing.T) {
 	entries, err := os.ReadDir("test/corpus")
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skip("no test/corpus directory")
+		}
 		t.Fatal(err)
 	}
 	for _, e := range entries {
