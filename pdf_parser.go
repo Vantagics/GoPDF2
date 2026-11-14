@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/andybalholm/brotli"
 )
 
 // Pre-compiled regexes for PDF parser — avoids recompilation on every call.
@@ -210,13 +212,51 @@ func (p *rawPDFParser) parseObjects() {
 			}
 			if endStream := bytes.Index(streamData, []byte("endstream")); endStream >= 0 {
 				raw := streamData[:endStream]
-				// trim trailing whitespace
-				raw = bytes.TrimRight(raw, "\r\n")
+				// Prefer /Length: the EOL before "endstream" is a separator,
+				// not data. Trim-right would corrupt streams whose payload
+				// legitimately ends with a newline byte (zlib checksums can).
+				if l, direct := streamLengthDirect(obj.dict); direct && l > 0 && int(l) <= len(raw) {
+					raw = raw[:l]
+				} else {
+					raw = bytes.TrimRight(raw, "\r\n")
+				}
 				obj.stream = p.decodeStream(raw, obj.dict)
 			}
 		}
 		p.objects[num] = obj
 	}
+}
+
+// streamLengthDirect reads /Length as a DIRECT integer (not an indirect
+// "N 0 R" reference). ok is false when /Length is absent or indirect.
+func streamLengthDirect(dict string) (int64, bool) {
+	idx := strings.Index(dict, "/Length")
+	if idx < 0 {
+		return 0, false
+	}
+	rest := dict[idx+len("/Length"):]
+	// skip whitespace
+	i := 0
+	for i < len(rest) && isPDFSpace(rest[i]) {
+		i++
+	}
+	start := i
+	for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+		i++
+	}
+	if i == start {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(rest[start:i], 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	// "N 0 R" → indirect reference, not a direct length
+	tail := strings.TrimLeft(rest[i:], " \t\r\n")
+	if strings.HasPrefix(tail, "0 R") {
+		return 0, false
+	}
+	return n, true
 }
 
 // trimObjBody strips the "N 0 obj" header and "endobj" trailer, returning the
@@ -412,11 +452,135 @@ func (p *rawPDFParser) applyFilter(filter string, data []byte, dict string) []by
 		return decodeASCIIHex(data)
 	case "ASCII85Decode", "A85":
 		return decodeASCII85(data)
+	case "RunLengthDecode", "RL":
+		return decodeRunLength(data)
+	case "LZWDecode", "LZW":
+		return decodeLZW(data, dict)
+	case "BrotliDecode":
+		return decodeBrotli(data)
 	default:
-		// LZWDecode, DCTDecode, RunLength etc. — return as-is
+		// DCTDecode (JPEG), JPXDecode, CCITTFaxDecode — images stay
+		// encoded; the image decoders handle them downstream.
 		return data
 	}
 }
+
+// decodeBrotli decompresses a /BrotliDecode stream (PDF 2.0 extension).
+func decodeBrotli(data []byte) []byte {
+	r := brotli.NewReader(bytes.NewReader(data))
+	out, err := io.ReadAll(r)
+	if err != nil && len(out) == 0 {
+		return data
+	}
+	return out
+}
+
+// decodeRunLength decodes a /RunLengthDecode stream (length runs 0-127 are
+// literals, 129-257 repeats the next byte 257-n times, 128 ends the data).
+func decodeRunLength(data []byte) []byte {
+	out := make([]byte, 0, len(data)*2)
+	for i := 0; i < len(data); {
+		n := int(data[i])
+		i++
+		if n == 128 { // EOD
+			break
+		}
+		if n < 128 { // literal run of n+1 bytes
+			if i+n+1 > len(data) {
+				break
+			}
+			out = append(out, data[i:i+n+1]...)
+			i += n + 1
+			continue
+		}
+		// repeat run: next byte copied 257-n times
+		if i >= len(data) {
+			break
+		}
+		b := data[i]
+		i++
+		for k := 0; k < 257-n; k++ {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// decodeLZW decodes a /LZWDecode stream (PDF's LZW variant: 9-12 bit codes
+// read MSB-first with the /EarlyChange convention; table code 256 = clear
+// table, 257 = EOD, per spec table 8). Semantics follow pdf.js/reference
+// decoders: the code width grows when nextCode+early reaches the next
+// power of two.
+func decodeLZW(data []byte, dict string) []byte {
+	// /EarlyChange is read for completeness; the empirically verified
+	// pairing (see addEntry below) uses the same width threshold for both
+	// its values.
+	if strings.Contains(dict, "/EarlyChange") {
+		if m := regexpEarlyChange.FindStringSubmatch(dict); m != nil {
+			_, _ = strconv.Atoi(m[1])
+		}
+	}
+	table := make([][]byte, 258)
+	for c := 0; c < 256; c++ {
+		table[c] = []byte{byte(c)}
+	}
+	width := 9
+	var (
+		buf, cnt uint32
+		out      []byte
+		prev     = -1
+	)
+	addEntry := func(entry []byte) {
+		table = append(table, entry)
+		// The decoder runs one assignment behind the encoder, so its width
+		// switch happens one emit earlier than the encoder's (the encoder
+		// flips when nextCode reaches 1<<width). Verified against pypdf's
+		// reference codec in both directions: the threshold is
+		// (1<<width)-1 for the default EarlyChange=1, and empirically also
+		// for EarlyChange=0 (the spec's "postpone as long as possible"
+		// wording cannot pair with any encoder threshold otherwise).
+		if len(table) == (1<<width)-1 && width < 12 {
+			width++
+		}
+	}
+	for _, b := range data {
+		buf = buf<<8 | uint32(b)
+		cnt += 8
+		for int(cnt) >= width {
+			code := int((buf >> (cnt - uint32(width))) & ((1 << width) - 1))
+			cnt -= uint32(width)
+			switch {
+			case code == 256: // clear table
+				table = table[:258]
+				width = 9
+				prev = -1
+			case code == 257: // EOD
+				return out
+			case prev < 0:
+				if code >= 256 {
+					return out // corrupt: first code must be a literal
+				}
+				out = append(out, table[code]...)
+				prev = code
+			case code < len(table):
+				entry := table[code]
+				out = append(out, entry...)
+				addEntry(append(append([]byte{}, table[prev]...), entry[0]))
+				prev = code
+			case code == len(table) && prev >= 0:
+				entry := append(append([]byte{}, table[prev]...), table[prev][0])
+				out = append(out, entry...)
+				addEntry(entry)
+				prev = code
+			default:
+				return out // corrupt code
+			}
+		}
+	}
+	return out
+}
+
+var regexpEarlyChange = regexp.MustCompile(`/EarlyChange\s+(\d+)`)
 
 // decodePredictor handles /DecodeParms predictors (PNG predictors used by
 // xref and object streams).
@@ -617,22 +781,17 @@ func zlibDecompress(data []byte) ([]byte, error) {
 }
 
 func (p *rawPDFParser) findRoot() {
-	// Look for /Root N 0 R in trailer or xref stream. With incremental
-	// updates the LAST trailer wins; scan trailer keyword occurrences
-	// backwards. Xref-stream PDFs have no "trailer" keyword — fall back to
-	// the first /Root match anywhere (existing behavior).
-	last := -1
+	// Look for /Root N 0 R and /Info N 0 R in each trailer, scanning
+	// forward so the LAST trailer that carries them wins — incremental
+	// update trailers may legitimately omit /Root or /Info and inherit
+	// them from a previous generation.
 	for pos := 0; ; {
 		i := bytes.Index(p.data[pos:], []byte("trailer"))
 		if i < 0 {
 			break
 		}
 		pos += i
-		last = pos
-		pos += 7
-	}
-	if last >= 0 {
-		seg := p.data[last:]
+		seg := p.data[pos:]
 		if m := reRootRef.FindSubmatch(seg); m != nil {
 			p.root, _ = strconv.Atoi(string(m[1]))
 		}
@@ -642,10 +801,23 @@ func (p *rawPDFParser) findRoot() {
 			// inline /Info dict in the trailer (GoPdf's own writer)
 			p.infoDict = extractDict(seg[i:])
 		}
-		return
+		pos += 7
 	}
-	if m := reRootRef.FindSubmatch(p.data); m != nil {
-		p.root, _ = strconv.Atoi(string(m[1]))
+	if p.root == 0 {
+		if m := reRootRef.FindSubmatch(p.data); m != nil {
+			p.root, _ = strconv.Atoi(string(m[1]))
+		}
+	}
+	if p.root == 0 || p.info == 0 {
+		// Xref-stream PDFs have no "trailer" keyword: /Root (and /Info)
+		// live inside the /Type/XRef stream dictionary. Take the LAST
+		// /Info ref — with incremental updates the newest xref stream
+		// wins.
+		if p.info == 0 {
+			for _, m := range reInfoRef.FindAllSubmatch(p.data, -1) {
+				p.info, _ = strconv.Atoi(string(m[1]))
+			}
+		}
 	}
 }
 
@@ -726,7 +898,9 @@ func extractPageRotate(dict string) int {
 }
 
 // pdfObjectType extracts the /Type value from a dict string with proper token
-// boundaries ("/Page" must not match "/Pages").
+// boundaries ("/Page" must not match "/Pages") and nested-dictionary
+// awareness ("/Group<</…/Type/Group>>" placed before /Type/Page by some
+// generators must not win).
 func pdfObjectType(dict string) string {
 	idx := 0
 	for {
@@ -734,7 +908,15 @@ func pdfObjectType(dict string) string {
 		if pos < 0 {
 			return ""
 		}
-		pos += idx + len("/Type")
+		pos += idx
+		// Skip /Type tokens nested inside a sub-dictionary. The outermost
+		// << puts the dict's own keys at depth 1; anything deeper (e.g.
+		// /Group<</…/Type/Group>>) belongs to a nested object.
+		if dictNestingAt(dict, pos) > 1 {
+			idx = pos + len("/Type")
+			continue
+		}
+		pos += len("/Type")
 		// skip whitespace
 		for pos < len(dict) && (dict[pos] == ' ' || dict[pos] == '\t' || dict[pos] == '\r' || dict[pos] == '\n') {
 			pos++
@@ -753,6 +935,47 @@ func pdfObjectType(dict string) string {
 		}
 		idx = pos
 	}
+}
+
+// dictNestingAt reports the open-dictionary depth at byte offset pos of
+// dict. Depth 0 means the token sits at the top level of the dictionary.
+// The scan stops at pos, so a dict whose /Type precedes its own "<<"
+// opener (truncated dict) still yields depth 0.
+func dictNestingAt(dict string, pos int) int {
+	depth := 0
+	for i := 0; i < len(dict) && i < pos; i++ {
+		if dict[i] == '<' {
+			if i+1 < len(dict) && dict[i+1] == '<' {
+				depth++
+				i++
+			}
+		} else if dict[i] == '>' {
+			if i+1 < len(dict) && dict[i+1] == '>' {
+				depth--
+				if depth < 0 {
+					depth = 0
+				}
+				i++
+			}
+		} else if dict[i] == '(' {
+			// skip literal string content — parens and brackets inside
+			// strings must not affect the nesting count
+			for i++; i < len(dict); i++ {
+				if dict[i] == '\\' {
+					i++
+					continue
+				}
+				if dict[i] == ')' {
+					break
+				}
+			}
+		} else if dict[i] == '<' && i+1 < len(dict) && dict[i+1] != '<' {
+			// hex string <...> — skip to the closing '>'
+			for i++; i < len(dict) && dict[i] != '>'; i++ {
+			}
+		}
+	}
+	return depth
 }
 
 func isNameChar(c byte) bool {

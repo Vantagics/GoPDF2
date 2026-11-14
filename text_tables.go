@@ -296,11 +296,15 @@ func cellText(lines []TextLine, cell TableCell) string {
 	if len(words) == 0 {
 		return ""
 	}
-	sort.Slice(words, func(i, j int) bool {
-		if math.Abs(words[i].y-words[j].y) > 2 {
-			return words[i].y < words[j].y
-		}
-		return words[i].x < words[j].x
+	// Stable sort by Y band only; within a band keep collection order.
+	// Words inside one TextLine are already left-to-right and the line
+	// list is already reading order, so a full (y, x) sort would scramble
+	// cells whose rows are drawn degenerately tight (within the 2pt band)
+	// — e.g. IRS forms stacking 3 lines of a checkbox label inside 1pt.
+	sort.SliceStable(words, func(i, j int) bool {
+		yi := int(words[i].y/2) * 2
+		yj := int(words[j].y/2) * 2
+		return yi < yj
 	})
 	parts := make([]string, 0, len(words))
 	for _, w := range words {

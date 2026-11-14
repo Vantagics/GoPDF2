@@ -85,6 +85,13 @@ func GetSourcePDFPageCount(pdfPath string) (int, error) {
 // from a byte slice without importing it.
 func GetSourcePDFPageCountFromBytes(pdfData []byte) (int, error) {
 	n, err := GetSourcePDFPageCountV2(pdfData)
+	if err != nil || n == 0 {
+		// Fall back to the internal raw parser, which supports stream
+		// filters (Brotli, LZW, RunLength) that lpdf does not.
+		if rn, rerr := rawPDFPageCount(pdfData); rerr == nil && rn > 0 {
+			return rn, nil
+		}
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -92,6 +99,15 @@ func GetSourcePDFPageCountFromBytes(pdfData []byte) (int, error) {
 		return 0, errors.New("PDF has no pages or is invalid")
 	}
 	return n, nil
+}
+
+// rawPDFPageCount counts pages with the internal raw parser.
+func rawPDFPageCount(pdfData []byte) (int, error) {
+	parser, err := newRawPDFParser(pdfData)
+	if err != nil {
+		return 0, err
+	}
+	return len(parser.pages), nil
 }
 
 // GetSourcePDFPageSizes returns the page sizes of all pages in a source PDF file.

@@ -267,37 +267,43 @@ func importFormFieldsFromPDF(data []byte, gp *GoPdf) {
 // extractStringFromDict extracts a string value for a key from a dict,
 // handling both literal strings (...) and hex strings <...>.
 func extractStringFromDict(dict, key string) string {
-	// Search for key followed by a delimiter to avoid matching /T as a
-	// prefix of /Type, /TR, etc.
-	searchKey := key + " "
-	idx := strings.Index(dict, searchKey)
-	if idx < 0 {
-		searchKey = key + "\n"
-		idx = strings.Index(dict, searchKey)
+	// Search for every occurrence of the exact key — writers emit both
+	// "/Key (value)" and "/Key(value)" — and take the first that yields a
+	// string. The character right after the key must not extend the name
+	// (so /T does not match /Title, /Producer does not match /ProducerX).
+	for pos := 0; ; {
+		idx := strings.Index(dict[pos:], key)
 		if idx < 0 {
 			return ""
 		}
-	}
-	rest := strings.TrimLeft(dict[idx+len(key):], " \t\r\n")
-	if strings.HasPrefix(rest, "(") {
-		end := strings.Index(rest, ")")
-		if end < 0 {
-			return ""
+		idx += pos
+		pos = idx + len(key)
+		if pos < len(dict) {
+			c := dict[pos]
+			if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
+				continue
+			}
 		}
-		return rest[1:end]
-	}
-	if strings.HasPrefix(rest, "<") {
-		end := strings.Index(rest, ">")
-		if end < 0 {
-			return ""
+		rest := strings.TrimLeft(dict[pos:], " \t\r\n")
+		if strings.HasPrefix(rest, "(") {
+			end := strings.Index(rest, ")")
+			if end < 0 {
+				return ""
+			}
+			return rest[1:end]
 		}
-		hex := rest[1:end]
-		data := hexBytes([]byte(hex))
-		// decode as UTF-16BE if BOM present, else Latin-1
-		if len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF {
-			return decodeUTF16BE(data[2:])
+		if strings.HasPrefix(rest, "<") {
+			end := strings.Index(rest, ">")
+			if end < 0 {
+				return ""
+			}
+			hex := rest[1:end]
+			data := hexBytes([]byte(hex))
+			// decode as UTF-16BE if BOM present, else Latin-1
+			if len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF {
+				return decodeUTF16BE(data[2:])
+			}
+			return string(data)
 		}
-		return string(data)
 	}
-	return ""
 }

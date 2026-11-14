@@ -32,7 +32,26 @@ func TestCorpus_AllExtractionAPIs(t *testing.T) {
 			if err != nil || count == 0 {
 				t.Fatalf("page count: %v (%d)", err, count)
 			}
-			for p := 0; p < count; p++ {
+			// Sweep every page of small documents; sample large ones (the
+			// full 6-API sweep over 600-page manuals blows the test
+			// timeout). Sample = first half + evenly spaced tail.
+			pages := make([]int, 0, count)
+			if count <= 120 {
+				for p := 0; p < count; p++ {
+					pages = append(pages, p)
+				}
+			} else {
+				const head = 40
+				const tail = 20
+				for p := 0; p < head; p++ {
+					pages = append(pages, p)
+				}
+				step := (count - head) / tail
+				for p := head; p < count; p += step {
+					pages = append(pages, p)
+				}
+			}
+			for _, p := range pages {
 				words := 0
 				// words + lines
 				lines, err := ExtractPageLines(data, p)

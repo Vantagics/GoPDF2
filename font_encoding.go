@@ -224,6 +224,40 @@ func decodeMacRomanByte(b byte) (rune, bool) {
 	return rune(b), true
 }
 
+// decodeCMSYByte decodes one byte of the classic TeX Computer Modern
+// Symbol font (CMSY10), whose built-in encoding differs from ASCII: the
+// math operators live in the control range and braces sit on the "f"/"g"
+// slots (102/103). Fonts subsets like "ABCDEF+CMSY10" declare no /Encoding,
+// so the built-in layout applies.
+func decodeCMSYByte(b byte) (rune, bool) {
+	switch b {
+	case 0x00:
+		return '−', true // minus
+	case 0x01:
+		return '·', true // periodcentered
+	case 0x02:
+		return '×', true
+	case 0x03:
+		return '∗', true // asteriskmath
+	case 0x04:
+		return '÷', true
+	case 0x06:
+		return '±', true
+	case 0x28:
+		return '(', true // parenleftex drawn as "("
+	case 0x29:
+		return ')', true // parenrightex drawn as ")"
+	case 0x66:
+		return '{', true // braceleft
+	case 0x67:
+		return '}', true // braceright
+	}
+	if b >= 0x20 && b < 0x7F {
+		return rune(b), true
+	}
+	return rune(b), b > 0
+}
+
 // decodeBaseEncodingByte decodes one byte using a named base encoding.
 func decodeBaseEncodingByte(b byte, base string) (rune, bool) {
 	switch base {
@@ -233,6 +267,8 @@ func decodeBaseEncodingByte(b byte, base string) (rune, bool) {
 		return decodeMacRomanByte(b)
 	case "PDFDocEncoding":
 		return decodePDFDocByte(b)
+	case "CMSYEncoding":
+		return decodeCMSYByte(b)
 	default: // StandardEncoding ~ ASCII for text purposes
 		return rune(b), true
 	}
@@ -246,6 +282,30 @@ func fontNameSuggestsCJK(baseFont string) bool {
 		"mingliu", "msung", "liu", "song", "sung", "kai", "hei", "fang", "gothic", "mincho",
 		"batang", "gulim", "dotum", "gungsuh", "unicode"} {
 		if strings.Contains(n, hint) {
+			return true
+		}
+	}
+	// Names encoded in a legacy CJK codepage — either raw high bytes
+	// (extractName already applied #XX escapes: "\xba\xda..." = "黑体" in
+	// GBK) or still hex-escaped ("/#BA#DA#CC#E5") — carry no ASCII hint.
+	// Decode and test whether the bytes form CJK text.
+	raw := []byte(baseFont)
+	if strings.Contains(baseFont, "#") {
+		raw = []byte(decodePDFNameEscapes(baseFont))
+	}
+	hasHigh := false
+	for _, v := range raw {
+		if v >= 0x80 {
+			hasHigh = true
+			break
+		}
+	}
+	if !hasHigh {
+		return false
+	}
+	for _, fam := range []int{cmapFamilyGBK, cmapFamilyBig5, cmapFamilySJIS} {
+		out := decodeCJKBytes(fam, raw)
+		if countCJK(out) > len([]rune(out))/3 {
 			return true
 		}
 	}
@@ -496,7 +556,9 @@ func decodeHexRune(hex string) rune {
 
 // parseDifferences parses a /Differences array from a font dict.
 // Format: /Differences [24 /breve 26 /caron ...] or with numeric ranges
-// followed by multiple names: [65 /A /B /C].
+// followed by multiple names: [65 /A /B /C]. Names may abut the preceding
+// number with no whitespace ([2/fi/fl], as emitted by pdfTeX) — the array
+// is tokenized by PDF syntax, not by whitespace.
 // Returns code -> glyph name.
 func parseDifferences(dict string) map[byte]string {
 	diffs := make(map[byte]string)
@@ -515,19 +577,40 @@ func parseDifferences(dict string) map[byte]string {
 	}
 	arr := rest[start+1 : start+end]
 
-	fields := strings.Fields(arr)
+	// isNameDelim reports whether c ends a PDF name token.
+	isNameDelim := func(c byte) bool {
+		switch c {
+		case ' ', '\n', '\r', '\t', '\f', 0, '[', ']', '<', '>', '(', ')', '/', '{', '}':
+			return true
+		}
+		return false
+	}
 	code := 0
-	for _, f := range fields {
-		if n, err := parsePDFFloat(f); err == nil && !strings.HasPrefix(f, "/") {
-			code = int(n)
+	for pos := 0; pos < len(arr); {
+		c := arr[pos]
+		if isPDFSpace(c) {
+			pos++
 			continue
 		}
-		if strings.HasPrefix(f, "/") {
-			name := strings.TrimPrefix(f, "/")
+		if c == '/' {
+			nameStart := pos + 1
+			pos++
+			for pos < len(arr) && !isNameDelim(arr[pos]) {
+				pos++
+			}
 			if code >= 0 && code <= 255 {
-				diffs[byte(code)] = name
+				diffs[byte(code)] = arr[nameStart:pos]
 			}
 			code++
+			continue
+		}
+		// numeric token: runs until whitespace or the next /name
+		numStart := pos
+		for pos < len(arr) && arr[pos] != '/' && !isPDFSpace(arr[pos]) {
+			pos++
+		}
+		if n, err := parsePDFFloat(arr[numStart:pos]); err == nil {
+			code = int(n)
 		}
 	}
 	return diffs

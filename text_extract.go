@@ -249,6 +249,13 @@ func buildFontMap(parser *rawPDFParser, page rawPDFPage) map[string]*fontInfo {
 			if fi.baseEncoding == "" && strings.Contains(obj.dict, "/BaseEncoding") {
 				fi.baseEncoding = extractName(obj.dict, "/BaseEncoding")
 			}
+			if fi.baseEncoding == "" && len(fi.differences) == 0 &&
+				!fi.isType0 && strings.Contains(fi.baseFont, "CMSY") {
+				// TeX Computer Modern Symbol fonts declare no /Encoding;
+				// their built-in layout differs from ASCII (braces on the
+				// f/g slots, math ops in the control range).
+				fi.baseEncoding = "CMSYEncoding"
+			}
 
 			// Try to parse /ToUnicode CMap
 			toUniRef := extractRef(obj.dict, "/ToUnicode")
@@ -1024,20 +1031,32 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 			if !inText {
 				continue
 			}
-			// TJ takes an array: [(string) num (string) ...]. Large positive
-			// adjustments (≥ ~0.2 em) carry inter-word spaces in kerned fonts.
+			// TJ takes an array: [(string) num (string) ...]. Large negative
+			// adjustments (≤ ~-0.2 em) displace the position right — those
+			// carry inter-word spaces in kerned fonts.
 			arr := findArrayBefore(tokens, i)
 			var combined strings.Builder
 			advance := 0.0
+			// preShift accumulates displacements BEFORE the first string:
+			// a TJ array may open with a kern ([-435(2018a)]), and the run
+			// must be reported at the post-kern position or the inter-word
+			// gap collapses and merging swallows the space.
+			preShift := 0.0
+			seenString := false
 			for _, item := range arr {
 				if isStringToken(item) {
+					seenString = true
 					combined.WriteString(decodeTextString(string(item), curFont))
 					advance += shownAdvance(item, curFont, fontSize)
 				} else if v, ok := fastParseFloat(item); ok {
 					// TJ numbers displace position by tx = -v/1000 em
 					// (spec 9.4.3): negative values move right, widening the
 					// gap — those carry inter-word spaces in kerned fonts.
-					advance -= v / 1000.0 * fontSize
+					disp := -v / 1000.0 * fontSize
+					advance += disp
+					if !seenString {
+						preShift += disp
+					}
 					if v <= -200 && fontSize > 0 {
 						// wide negative kern ≈ a space glyph
 						if combined.Len() > 0 && !strings.HasSuffix(combined.String(), " ") {
@@ -1048,8 +1067,10 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 			}
 			text := combined.String()
 			if text != "" {
-				xRaw := ctx.offX + ctmA*tmX + ctmE
-				yRaw := (pageHeight - ctx.offY) - (ctmD*tmY + ctmF)
+				// The pre-string displacement moves along the text baseline
+				// direction (tmA, tmB), like the post-loop tmX/tmY advance.
+				xRaw := ctx.offX + ctmA*(tmX+preShift*tmA) + ctmE
+				yRaw := (pageHeight - ctx.offY) - (ctmD*(tmY+preShift*tmB) + ctmF)
 				x, y := ctx.pageRotateCoords(xRaw, yRaw)
 				var fl int
 				if curFont != nil {

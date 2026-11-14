@@ -152,20 +152,101 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 		runs []ExtractedText
 	}
 	const yTol = 2.0
-	lines := make([]*line, 0, 64)
-	lineIndex := map[int]int{} // bucket -> line idx
+	// Group runs into lines by baseline Y (PDF Y grows downward here),
+	// bucketed to 2pt to absorb rounding noise. Insertion order is kept so
+	// same-Y buckets stay stable.
+	bucketRuns := [][]ExtractedText{}
+	bucketIdx := map[int]int{}
 	for _, r := range runs {
 		if r.Text == "" {
 			continue
 		}
 		bucket := int(math.Round(r.Y/yTol) * yTol)
-		idx, ok := lineIndex[bucket]
+		idx, ok := bucketIdx[bucket]
 		if !ok {
-			idx = len(lines)
-			lineIndex[bucket] = idx
-			lines = append(lines, &line{y: r.Y})
+			idx = len(bucketRuns)
+			bucketIdx[bucket] = idx
+			bucketRuns = append(bucketRuns, nil)
 		}
-		lines[idx].runs = append(lines[idx].runs, r)
+		bucketRuns[idx] = append(bucketRuns[idx], r)
+	}
+
+	// runWidth estimates a run's advance width for the overlap test below.
+	runWidth := func(e ExtractedText) float64 {
+		if e.Width > 0 {
+			return e.Width
+		}
+		return 0.55 * e.FontSize * float64(len([]rune(e.Text)))
+	}
+
+	// Degenerate-leading split: documents produced by buggy generators can
+	// space consecutive lines by ~1pt (far below the yTol bucket), so one
+	// bucket then holds several distinct lines whose X intervals overlap.
+	// Runs that overlap an already-placed run by more than half the
+	// narrower run's width start a separate sub-line (bug1057544.pdf).
+	splitBucket := func(rs []ExtractedText) []*line {
+		sub := make([]*line, 0, len(rs))
+		for _, r := range rs {
+			placed := false
+			for _, ln := range sub {
+				if math.Abs(r.Y-ln.y) > yTol {
+					continue
+				}
+				rw := runWidth(r)
+				conflict := false
+				for _, m := range ln.runs {
+					mw := runWidth(m)
+					ov := math.Min(m.X+mw, r.X+rw) - math.Max(m.X, r.X)
+					if ov > 0.5*math.Min(mw, rw) {
+						conflict = true
+						break
+					}
+				}
+				if !conflict {
+					ln.runs = append(ln.runs, r)
+					placed = true
+					break
+				}
+			}
+			if !placed {
+				sub = append(sub, &line{y: r.Y, runs: []ExtractedText{r}})
+			}
+		}
+		return sub
+	}
+
+	lines := make([]*line, 0, len(bucketRuns))
+	for _, rs := range bucketRuns {
+		if len(rs) == 1 {
+			lines = append(lines, &line{y: rs[0].Y, runs: rs})
+			continue
+		}
+		// Precompute widths once — the pairwise loop below must not
+		// allocate per comparison.
+		widths := make([]float64, len(rs))
+		for i, r := range rs {
+			widths[i] = runWidth(r)
+		}
+		// Only pay the O(n²) split cost when two runs actually overlap;
+		// normal pages hold adjacent, non-overlapping runs.
+		needsSplit := false
+		for i := 0; i < len(rs) && !needsSplit; i++ {
+			rw := widths[i]
+			for j := i + 1; j < len(rs); j++ {
+				mw := widths[j]
+				ov := math.Min(rs[i].X+rw, rs[j].X+mw) - math.Max(rs[i].X, rs[j].X)
+				dy := math.Abs(rs[i].Y - rs[j].Y)
+				if ov > 0.5*math.Min(rw, mw) && dy > 0.01 && dy <= yTol {
+					needsSplit = true
+					break
+				}
+			}
+		}
+		if !needsSplit {
+			lines = append(lines, &line{y: rs[0].Y, runs: rs})
+			continue
+		}
+		lines = append(lines, splitBucket(rs)...)
 	}
 
 	// Sort lines in reading order: ExtractedText.Y is top-down

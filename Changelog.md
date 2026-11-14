@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-11-15
+
+### Fixed
+- **Own output unreadable**: content streams written with a trailing EOL are
+  now cut at the exact `/Length` when parsing — streams whose zlib payload
+  ends with a newline byte were truncated, which silently broke decoding of
+  every PDF produced by this library and degraded text extraction to
+  replacement characters
+- **Wrong inter-word spacing on kerned PDFs**: a TJ array that opens with a
+  displacement (`[-435(2018a)]TJ`) now reports the run at the post-kern
+  position, so citation-style gaps are no longer swallowed
+  ("et al.,2018a;" → "et al., 2018a;")
+- **Degenerate line spacing scrambled order**: pages whose lines are drawn
+  less than 2pt apart (pdf.js bug1057544, IRS checkbox labels) are split into
+  separate lines when their X intervals overlap; table cells stop
+  coordinate-sorting words and follow reading order
+- **/Differences arrays without whitespace** (`[2/fi/fl 17/dotlessi]`, pdfTeX
+  style) are now tokenized by PDF syntax — ﬁ/fl ligatures and brace glyphs
+  decode correctly on LaTeX/Nimbus fonts
+- **CM symbol fonts** (CMSY10 subsets with no /Encoding) decode through the
+  TeX symbol layout: braces on the f/g slots, parens and math operators
+- **Incremental-update trailers** without /Root no longer lose the page tree
+  (the trailer chain is walked backwards)
+- **/Info in xref-stream PDFs** is read from the /Type/XRef dictionary
+- **Unresolved objects and unset fields** in `extractStringFromDict` now
+  tolerate `/Key(value)` without a space
+- **Page tree invisible to the raw parser** on LiveCycle/Nitro PDFs: page
+  dicts that place a nested `/Group<</…/Type/Group>>` before their own
+  `/Type/Page` (i1040gi.pdf) were classified as the nested type, losing all
+  pages; `pdfObjectType` now honors dictionary nesting depth
+- **LZWDecode/RunLengthDecode** implemented (pypdf cross-verified in both
+  directions); BrotliDecode (PDF 2.0) via andybalholm/brotli; page-count
+  APIs fall back to the raw parser when lpdf cannot handle a filter
+
+### Added
+- **ExtractFormFieldsFromPage / ExtractAllFormFields / ExtractFormFieldsFromFile**
+  (PyMuPDF widgets parity): walks /AcroForm /Fields trees with /Kids and
+  merged field/widget dicts, resolves dotted names, /FT types and /V values,
+  maps pages via the widget's /P; falls back to per-page /Annots
+- **html2pdf**: `word-spacing`, `page-break-before/after: always`,
+  `max-width`/`max-height` on images, `float: right` image alignment,
+  `<mark>` highlight, `<dl>`/`<dt>`/`<dd>` definition lists, `<hr>` CSS
+  styling (width, height, border-top shorthand, centered rules)
+- Corpus: 20 complex web PDFs (pdf.js suite, IRS forms, arXiv BERT, GNU gawk
+  manual, Brotli/LZW samples) with targeted quality assertions
+  (`corpus_web_test.go`) and generation→extraction round-trip tests for
+  tables, formulas, paragraphs and fonts (`generation_roundtrip_test.go`)
+
+
 ## [2.0.0] - 2026-11-07
 
 ### Fixed

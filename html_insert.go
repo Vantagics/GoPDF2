@@ -78,6 +78,7 @@ type htmlRenderState struct {
 	strike     bool
 	lineHeight float64 // multiplier; 0 = default 1.2
 	letterSp   float64 // letter-spacing in units
+	wordSp     float64 // word-spacing in units (extra advance per space)
 	textIndent float64 // first-line indent in units
 	preformed  bool    // white-space: pre
 	transform  int     // 0 none, 1 uppercase, 2 lowercase, 3 capitalize
@@ -178,8 +179,10 @@ type htmlTableRow struct {
 //
 //	color, background-color, font-size, font-family, font-weight, font-style,
 //	text-decoration, text-align (incl. justify), text-transform, text-indent,
-//	line-height, letter-spacing, vertical-align, width (tables/cells/imgs),
-//	margin-top, margin-bottom, white-space.
+//	line-height, letter-spacing, word-spacing, vertical-align, width and
+//	max-width/max-height (tables/cells/imgs), margin-top, margin-bottom,
+//	margin-left/right with auto centering, white-space, page-break-before,
+//	page-break-after, page-break-inside, float (images), padding*, border*.
 //
 // Parameters:
 //   - x, y: Top-left corner of the box (in document units)
@@ -345,9 +348,28 @@ func (r *htmlRenderer) renderNode(node *htmlNode, state htmlRenderState) error {
 		return r.renderTextFragments(splitToFragments(text, state), state, 0)
 	}
 
+	// element node: honor page-break-before/after on block elements
+	css := r.style.resolve(node)
+	if r.paginate && isBlockElement(node.Tag) {
+		if strings.TrimSpace(css["page-break-before"]) == "always" {
+			if err := r.pageBreak(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := r.renderNodeInner(node, state, css); err != nil {
+		return err
+	}
+	if r.paginate && isBlockElement(node.Tag) &&
+		strings.TrimSpace(css["page-break-after"]) == "always" {
+		return r.pageBreak()
+	}
+	return nil
+}
+
+func (r *htmlRenderer) renderNodeInner(node *htmlNode, state htmlRenderState, css map[string]string) error {
 	// element node
 	newState := state
-	css := r.style.resolve(node)
 
 	switch node.Tag {
 	case "b", "strong":
@@ -466,6 +488,27 @@ func (r *htmlRenderer) renderNode(node *htmlNode, state htmlRenderState) error {
 	case "li":
 		// handled by renderList
 		return nil
+	case "mark":
+		// highlighted text: yellow background behind the inline run
+		newState = r.applyCSSProps(css, newState, node)
+		if _, ok := css["background-color"]; !ok {
+			newState.bgR, newState.bgG, newState.bgB = 255, 236, 97
+			newState.hasBg = true
+		}
+		return r.renderNodes(node.Children, newState)
+	case "dl":
+		newState = r.applyCSSProps(css, newState, node)
+		return r.renderNodes(node.Children, newState)
+	case "dt":
+		newState = r.applyCSSProps(css, newState, node)
+		newState.fontStyle |= Bold
+		newState.marginTop += newState.fontSize * 0.3
+		newState.marginBot = 0
+		return r.renderNodes(node.Children, newState)
+	case "dd":
+		newState = r.applyCSSProps(css, newState, node)
+		newState.marginLeft += newState.fontSize * 1.6
+		return r.renderNodes(node.Children, newState)
 	case "sub":
 		newState.fontSize = state.fontSize * 0.7
 		newState.rise = -state.fontSize * 0.25
@@ -644,6 +687,11 @@ func (r *htmlRenderer) applyCSSProps(css map[string]string, state htmlRenderStat
 	if ls, ok := css["letter-spacing"]; ok {
 		if v, ok := parseDimension(ls, state.fontSize); ok {
 			state.letterSp = v / r.unitConversion()
+		}
+	}
+	if ws, ok := css["word-spacing"]; ok {
+		if v, ok := parseDimension(ws, state.fontSize); ok {
+			state.wordSp = v / r.unitConversion()
 		}
 	}
 	if ti, ok := css["text-indent"]; ok {
@@ -1289,25 +1337,38 @@ func (r *htmlRenderer) measureFragment(f *textFragment) (float64, error) {
 	if err := r.applyFont(f.state); err != nil {
 		return 0, err
 	}
+	w, err := r.spacedTextWidth(f.text, &f.state)
+	if err != nil {
+		return 0, err
+	}
+	f.width = w
+	return w, nil
+}
+
+// spacedTextWidth measures a run's advance width with letter-spacing and
+// word-spacing applied.
+func (r *htmlRenderer) spacedTextWidth(text string, state *htmlRenderState) (float64, error) {
 	var w float64
 	var err error
-	if f.state.letterSp > 0 {
+	if state.letterSp > 0 {
 		// letter spacing: measure each rune + spacing
-		for _, rn := range f.text {
+		for _, rn := range text {
 			cw, e := r.gp.MeasureTextWidth(string(rn))
 			if e != nil {
 				err = e
 				break
 			}
-			w += cw + f.state.letterSp
+			w += cw + state.letterSp
 		}
 	} else {
-		w, err = r.gp.MeasureTextWidth(f.text)
+		w, err = r.gp.MeasureTextWidth(text)
 	}
 	if err != nil {
 		return 0, err
 	}
-	f.width = w
+	if state.wordSp > 0 {
+		w += float64(strings.Count(text, " ")) * state.wordSp
+	}
 	return w, nil
 }
 
@@ -1583,12 +1644,8 @@ func (r *htmlRenderer) renderFragmentText(f *textFragment, lh, extraSpace float6
 		return err
 	}
 	w := f.width
-	if f.state.letterSp > 0 {
-		w = 0
-		for _, rn := range f.text {
-			cw, _ := r.gp.MeasureTextWidth(string(rn))
-			w += cw + f.state.letterSp
-		}
+	if f.state.letterSp > 0 || f.state.wordSp > 0 {
+		w, _ = r.spacedTextWidth(f.text, &f.state)
 	}
 
 	xStart := r.cursorX
@@ -1695,6 +1752,28 @@ func (r *htmlRenderer) newImageFragment(node *htmlNode, state htmlRenderState) *
 		imgH = ih * 0.75 / r.unitConversion()
 	}
 	imgW, imgH = fitWithinBox(imgW, imgH, r.boxW, r.boxH)
+	// max-width / max-height clamping (CSS), preserving the aspect ratio
+	if css, ok := node.Attrs["style"]; ok {
+		styles := parseInlineStyle(css)
+		if mw, ok := styles["max-width"]; ok {
+			if v, vok := parseDimension(mw, r.boxW); vok && v > 0 {
+				maxW := v / r.unitConversion()
+				if imgW > maxW {
+					imgH *= maxW / imgW
+					imgW = maxW
+				}
+			}
+		}
+		if mh, ok := styles["max-height"]; ok {
+			if v, vok := parseDimension(mh, r.boxH); vok && v > 0 {
+				maxH := v / r.unitConversion()
+				if imgH > maxH {
+					imgW *= maxH / imgH
+					imgH = maxH
+				}
+			}
+		}
+	}
 	if imgW <= 0 || imgH <= 0 {
 		return nil
 	}
@@ -1758,7 +1837,17 @@ func (r *htmlRenderer) renderImage(node *htmlNode, state htmlRenderState, css ma
 	} else if !ok {
 		return nil
 	}
-	if err := r.gp.ImageByHolder(frag.img.holder, r.boxX, r.cursorY, &Rect{W: frag.img.w, H: frag.img.h}); err != nil {
+	// float: right places the image at the right box edge; left keeps the
+	// default flow position. Text wrap-around is not modeled — the image
+	// occupies its own line either way.
+	imgX := r.boxX
+	if strings.TrimSpace(css["float"]) == "right" {
+		imgX = r.boxX + r.boxW - frag.img.w
+		if imgX < r.boxX {
+			imgX = r.boxX
+		}
+	}
+	if err := r.gp.ImageByHolder(frag.img.holder, imgX, r.cursorY, &Rect{W: frag.img.w, H: frag.img.h}); err != nil {
 		return err
 	}
 	r.cursorY += frag.img.h
@@ -1780,6 +1869,12 @@ func (r *htmlRenderer) renderHR(node *htmlNode, state htmlRenderState) error {
 			strokeR, strokeG, strokeB = cr, cg, cb
 		}
 	}
+	if sizeAttr, ok := node.Attrs["size"]; ok {
+		if v, err := strconv.ParseFloat(strings.TrimSpace(sizeAttr), 64); err == nil && v > 0 {
+			width = v
+		}
+	}
+	hrW := r.boxW
 	if css, ok := node.Attrs["style"]; ok {
 		styles := parseInlineStyle(css)
 		if c, ok2 := styles["color"]; ok2 {
@@ -1787,10 +1882,39 @@ func (r *htmlRenderer) renderHR(node *htmlNode, state htmlRenderState) error {
 				strokeR, strokeG, strokeB = cr, cg, cb
 			}
 		}
+		if v, ok2 := parseDimension(styles["height"], state.fontSize); ok2 && v > 0 {
+			width = v / r.unitConversion()
+		}
+		// border-top: <width> <style> <color> — thickness + color win
+		if bt, ok2 := styles["border-top"]; ok2 && strings.TrimSpace(bt) != "" && bt != "none" {
+			fields := strings.Fields(bt)
+			for _, f := range fields {
+				if v, ok3 := parseDimension(f, state.fontSize); ok3 && v > 0 {
+					width = v / r.unitConversion()
+					break
+				}
+				if cr, cg, cb, ok3 := parseCSSColor(f); ok3 {
+					strokeR, strokeG, strokeB = cr, cg, cb
+				}
+			}
+		}
+		if w, ok2 := styles["width"]; ok2 {
+			if v, ok3 := parseDimension(w, r.boxW); ok3 && v > 0 {
+				hrW = v / r.unitConversion()
+			}
+		}
+	}
+	if hrW > r.boxW {
+		hrW = r.boxW
+	}
+	// center a narrower rule
+	x0 := r.boxX
+	if hrW < r.boxW {
+		x0 = r.boxX + (r.boxW-hrW)/2
 	}
 	r.gp.SetStrokeColor(strokeR, strokeG, strokeB)
 	r.gp.SetLineWidth(width)
-	r.gp.Line(r.boxX, y, r.boxX+r.boxW, y)
+	r.gp.Line(x0, y, x0+hrW, y)
 	r.cursorY = y + r.lineHeightOf(state)*0.5
 	r.cursorX = r.boxX
 	r.addVerticalSpace(state.fontSize * 0.3)

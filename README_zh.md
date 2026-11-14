@@ -13,7 +13,7 @@ GoPDF2 是一个用 Go 编写的 PDF 生成库。基于 [gopdf](https://github.c
 
 - Unicode 子集字体嵌入（中文、日文、韩文等），自动子集化以最小化文件体积
 - **打开并修改已有 PDF** — 通过 `OpenPDF` 导入所有页面，在其上叠加新内容（文字、图片、HTML、绘图），然后保存
-- **HTML 转 PDF 渲染** — 通过 `InsertHTMLBox` 支持 `<b>`、`<i>`、`<u>`、`<s>`、`<p>`、`<h1>`–`<h6>`、`<font>`、`<span style>`、`<img>`（文件与 base64 Data URI）、`<ul>`/`<ol>`（嵌套、`start`/`type`）、`<hr>`、`<center>`、`<a>`、`<blockquote>`、`<pre>`/`<code>`、完整 `<table>`（colspan/rowspan、列宽、标题、单元格样式）、`<style>` 样式块（标签/类/ID 选择器）、中文避头尾换行、两端对齐等；多页流式排版使用 `InsertHTMLPaginated`
+- **HTML 转 PDF 渲染** — 通过 `InsertHTMLBox` 支持 `<b>`、`<i>`、`<u>`、`<s>`、`<p>`、`<h1>`–`<h6>`、`<font>`、`<span style>`、`<img>`（文件与 base64 Data URI）、`<ul>`/`<ol>`（嵌套、`start`/`type`）、`<hr>`、`<center>`、`<a>`、`<blockquote>`、`<pre>`/`<code>`、完整 `<table>`（colspan/rowspan、列宽、标题、单元格样式）、`<style>` 样式块（标签/类/ID 选择器）、中文避头尾换行、两端对齐等；多页流式排版使用 `InsertHTMLPaginated`；新增 `word-spacing`、`page-break-before/after`、`<mark>` 高亮、`<dl>/<dt>/<dd>` 定义列表、图片 `max-width`/`float`、`<hr>` CSS 样式，以及表单字段提取 API（`ExtractFormFieldsFromPage`，支持 /AcroForm 字段树与 /Kids 层级）
 - **水印** — 通过 `AddWatermarkText` / `AddWatermarkImage` 添加文字和图片水印，支持透明度、旋转、平铺
 - **PDF 注释** — 通过 `AddAnnotation` 添加便签、高亮、下划线、删除线、矩形、圆形、自由文本等注释
 - **页面操作** — 提取页面（`ExtractPages`）、合并 PDF（`MergePages`）、删除页面（`DeletePage` / `DeletePages`）、复制页面（`CopyPage`）、移动页面（`MovePage`）
