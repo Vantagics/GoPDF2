@@ -331,3 +331,33 @@ func TestPDFDocPageSize(t *testing.T) {
 		t.Errorf("PageSizes = %+v", sizes)
 	}
 }
+
+// TestTextAlphaExtraction verifies ExtGState /ca fill alpha reaches the
+// extracted words (CellOption Transparency writes /ca + /GSn gs).
+func TestTextAlphaExtraction(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf")
+	pdf.SetFont("lib", "", 12)
+	pdf.AddPage()
+	tr, _ := NewTransparency(0.5, string(NormalBlendMode))
+	_ = pdf.CellWithOption(&Rect{W: 200, H: 20}, "Faded words", CellOption{Transparency: &tr})
+	path := filepath.Join(t.TempDir(), "alpha.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	words, err := ExtractTextWordsInRect(data, 0, ClipRect{X: 0, Y: 0, W: 595, H: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(words) == 0 || words[0].Text != "Faded" {
+		for _, w := range words {
+			t.Logf("w %q", w.Text)
+		}
+		t.Fatalf("faded words missing")
+	}
+	if words[0].Alpha == 255 || words[0].Alpha < 100 {
+		t.Errorf("alpha = %d, want ~128 (0.5)", words[0].Alpha)
+	}
+}

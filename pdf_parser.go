@@ -64,8 +64,9 @@ type rawPDFPage struct {
 
 // rawPDFResources holds resource references for a page.
 type rawPDFResources struct {
-	fonts map[string]int // /F1 -> obj number
-	xobjs map[string]int // /Im1 -> obj number
+	fonts      map[string]int // /F1 -> obj number
+	xobjs      map[string]int // /Im1 -> obj number
+	extgstates map[string]int // /GS1 -> obj number (ExtGState dicts)
 }
 
 // newRawPDFParser creates a parser for the given PDF data.
@@ -874,8 +875,9 @@ func extractContentRefs(dict string) []int {
 
 func (p *rawPDFParser) extractResources(dict string, pageObjNum int) rawPDFResources {
 	res := rawPDFResources{
-		fonts: make(map[string]int),
-		xobjs: make(map[string]int),
+		fonts:      make(map[string]int),
+		xobjs:      make(map[string]int),
+		extgstates: make(map[string]int),
 	}
 	// Resources can be inline or a reference
 	resDict := dict
@@ -886,6 +888,7 @@ func (p *rawPDFParser) extractResources(dict string, pageObjNum int) rawPDFResou
 		}
 	}
 	// Extract /Font << /F1 N 0 R ... >>
+	p.extractNamedRefs(resDict, "/ExtGState", res.extgstates)
 	p.extractNamedRefs(resDict, "/Font", res.fonts)
 	// Extract /XObject << /Im1 N 0 R ... >>
 	p.extractNamedRefs(resDict, "/XObject", res.xobjs)
@@ -961,6 +964,8 @@ type ExtractedText struct {
 	ColorR, ColorG, ColorB uint8
 	// FontFlags bit 1 = bold, bit 2 = italic, detected from the font name.
 	FontFlags int
+	// Alpha is the fill alpha from ExtGState /ca (255 = opaque).
+	Alpha uint8
 }
 
 // ExtractedImage represents an image found on a PDF page.

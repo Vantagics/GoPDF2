@@ -23,7 +23,8 @@ type mergedRun struct {
 	font  string
 	size  float64
 	colorR, colorG, colorB uint8
-	flags int
+	alpha  uint8
+	flags  int
 }
 
 // mergeGapRatio: a gap larger than this fraction of the font size between two
@@ -104,6 +105,7 @@ func explodeRunSpaces(e ExtractedText) []ExtractedText {
 				Width:    float64(end-segStart) * per,
 				ColorR:   e.ColorR, ColorG: e.ColorG, ColorB: e.ColorB,
 				FontFlags: e.FontFlags,
+				Alpha:     e.Alpha,
 			})
 		}
 	}
@@ -185,6 +187,7 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 		curFont := ""
 		curColorR, curColorG, curColorB := uint8(0), uint8(0), uint8(0)
 		curFlags := 0
+		curAlpha := uint8(255)
 		spaceSeen := false
 
 		flush := func() {
@@ -193,7 +196,7 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 					text: cur.String(), x: wordX, width: wordW, y: ln.y,
 					font: curFont, size: curSize,
 					colorR: curColorR, colorG: curColorG, colorB: curColorB,
-					flags: curFlags,
+					alpha: curAlpha, flags: curFlags,
 				})
 			}
 			cur.Reset()
@@ -231,6 +234,7 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 				curFont = r.FontName
 				curColorR, curColorG, curColorB = r.ColorR, r.ColorG, r.ColorB
 				curFlags = r.FontFlags
+				curAlpha = r.Alpha
 				spaceSeen = false
 				continue
 			}
@@ -259,6 +263,7 @@ func buildMergedRuns(runs []ExtractedText) [][]mergedRun {
 				curFont = r.FontName
 				curColorR, curColorG, curColorB = r.ColorR, r.ColorG, r.ColorB
 				curFlags = r.FontFlags
+				curAlpha = r.Alpha
 			}
 			spaceSeen = false
 		}
@@ -284,6 +289,7 @@ func MergeTextRuns(runs []ExtractedText) []ExtractedText {
 				FontName: w.font, FontSize: w.size,
 				Width: w.width,
 				ColorR: w.colorR, ColorG: w.colorG, ColorB: w.colorB,
+				Alpha: w.alpha,
 				FontFlags: w.flags,
 			})
 		}
@@ -311,6 +317,7 @@ func GroupIntoTextLines(runs []ExtractedText) []TextLine {
 				FontSize: w.size,
 				ColorR:   w.colorR, ColorG: w.colorG, ColorB: w.colorB,
 				Flags: w.flags,
+				Alpha: w.alpha,
 			}
 			if i > 0 {
 				// decide space by gap

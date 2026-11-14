@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -80,6 +81,8 @@ func extractRunsWithParser(parser *rawPDFParser, pageIndex int) ([]ExtractedText
 		xobjs:    page.resources.xobjs,
 		mediaBox: page.mediaBox,
 		rotate:   page.rotate,
+		extgs:    page.resources.extgstates,
+		alpha:    1,
 		visited:  map[int]bool{},
 	}, stream), nil
 }
@@ -104,6 +107,8 @@ func ExtractTextFromAllPages(pdfData []byte) (map[int][]ExtractedText, error) {
 				xobjs:    page.resources.xobjs,
 				mediaBox: page.mediaBox,
 				rotate:   page.rotate,
+				extgs:    page.resources.extgstates,
+				alpha:    1,
 				visited:  map[int]bool{},
 			}, stream)
 			if len(texts) > 0 {
@@ -128,11 +133,22 @@ func ExtractTextFromAllPages(pdfData []byte) (map[int][]ExtractedText, error) {
 // ExtractPageText extracts all text from a page as a single string.
 // Convenience wrapper around ExtractTextFromPage.
 func ExtractPageText(pdfData []byte, pageIndex int) (string, error) {
-	// Try robust ledongthuc/pdf backend first.
+	// The raw parser (position-aware merging, column-aware reading order,
+	// encodings) is the primary backend; the legacy v2 backend is the
+	// fallback for streams it cannot handle.
+	if lines, err := ExtractPageLines(pdfData, pageIndex); err == nil && len(lines) > 0 {
+		var sb strings.Builder
+		for _, ln := range lines {
+			sb.WriteString(ln.Text)
+			sb.WriteByte('\n')
+		}
+		return sb.String(), nil
+	}
+	// Fallback to the legacy v2 backend.
 	if result, err := extractPageTextV2(pdfData, pageIndex); err == nil && result != "" {
 		return result, nil
 	}
-	// Fallback to raw parser.
+	// Last resort: raw runs joined by baseline.
 	texts, err := ExtractTextFromPage(pdfData, pageIndex)
 	if err != nil {
 		return "", err
@@ -744,6 +760,8 @@ type extractionContext struct {
 	fillR    uint8 // current fill color (text renders with the fill)
 	fillG    uint8
 	fillB    uint8
+	alpha    float64        // current fill alpha from ExtGState /ca (1 = opaque)
+	extgs    map[string]int // ExtGState resource names (with leading '/')
 }
 
 // pageRotateCoords maps unrotated top-down page coordinates to visual
@@ -974,6 +992,7 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 						ColorG:    ctx.fillG,
 						ColorB:    ctx.fillB,
 						FontFlags: fl,
+						Alpha:     uint8(ctx.alpha*255 + 0.5),
 					})
 				}
 				// Advance the text position by the glyph widths shown,
@@ -1030,6 +1049,7 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 					ColorG:    ctx.fillG,
 					ColorB:    ctx.fillB,
 					FontFlags: fl,
+					Alpha:     uint8(ctx.alpha*255 + 0.5),
 				})
 			}
 			tmX += advance * tmA
@@ -1058,6 +1078,7 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 						Width:  shownWidth(raw, curFont, fontSize) * math.Hypot(tmA, tmB),
 						ColorR: ctx.fillR, ColorG: ctx.fillG, ColorB: ctx.fillB,
 						FontFlags: fl,
+						Alpha:     uint8(ctx.alpha*255 + 0.5),
 					})
 				}
 				tmX += shownAdvance(raw, curFont, fontSize)
@@ -1087,9 +1108,32 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 						Width:  shownWidth(raw, curFont, fontSize) * math.Hypot(tmA, tmB),
 						ColorR: ctx.fillR, ColorG: ctx.fillG, ColorB: ctx.fillB,
 						FontFlags: fl,
+						Alpha:     uint8(ctx.alpha*255 + 0.5),
 					})
 				}
 				tmX += shownAdvance(raw, curFont, fontSize)
+			}
+		case "gs":
+			if os.Getenv("GOPDF_DEBUG_GUTTER") != "" {
+				fmt.Fprintf(os.Stderr, "DBG gs fired: name=%q mapsize=%d\n", string(tokens[i-1]), len(ctx.extgs))
+			}
+			if i >= 1 && len(tokens[i-1]) > 0 && tokens[i-1][0] == '/' {
+				gsName := "/" + string(tokens[i-1][1:])
+				ref, ok := ctx.extgs[gsName]
+				if os.Getenv("GOPDF_DEBUG_GUTTER") != "" {
+					fmt.Fprintf(os.Stderr, "DBG gs: name=%q ok=%v ref=%d\n", gsName, ok, ref)
+				}
+				if ok {
+					if gsObj, ok2 := ctx.parser.objects[ref]; ok2 {
+						ca := extractNumValue(gsObj.dict, "/ca")
+						if os.Getenv("GOPDF_DEBUG_GUTTER") != "" {
+							fmt.Fprintf(os.Stderr, "DBG gs: ca=%.3f\n", ca)
+						}
+						if ca >= 0 && ca <= 1 {
+							ctx.alpha = ca
+						}
+					}
+				}
 			}
 		case "rg":
 			if a := popN(3); len(a) >= 3 {

@@ -60,6 +60,8 @@ type TextWord struct {
 	ColorR, ColorG, ColorB uint8
 	// Flags bit 1 = bold, bit 2 = italic (detected from the font name).
 	Flags int
+	// Alpha is the fill alpha (255 = opaque).
+	Alpha uint8
 }
 
 // textExtractionJSON is the JSON output structure.
@@ -155,6 +157,8 @@ func extractTextFromPageWithParser(parser *rawPDFParser, pdfData []byte, pageInd
 		xobjs:    page.resources.xobjs,
 		mediaBox: page.mediaBox,
 		rotate:   page.rotate,
+		extgs:    page.resources.extgstates,
+		alpha:    1,
 		visited:  map[int]bool{},
 	}, stream), nil
 }
