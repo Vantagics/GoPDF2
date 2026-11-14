@@ -1110,6 +1110,27 @@ func ExtractPageDrawings(pdfData []byte, pageIndex int) ([]Drawing, error)
 func ExtractDrawingsFromFile(path string, pageIndex int) ([]Drawing, error)
 ```
 
+### Annotation Extraction
+
+```go
+func ExtractAnnotationsFromPage(pdfData []byte, pageIndex int) ([]ExtractedAnnotation, error)
+func ExtractAnnotationsFromFile(path string, pageIndex int) ([]ExtractedAnnotation, error)
+func ExtractAllAnnotations(pdfData []byte) (map[int][]ExtractedAnnotation, error)
+
+type ExtractedAnnotation struct {
+    Type     string  // /Subtype: "Text", "Highlight", "Square", ...
+    X, Y, W, H float64 // rectangle, top-down page points
+    Contents string  // annotation body
+    Author   string  // /T title field
+    ColorR, ColorG, ColorB uint8
+    Page     int     // 1-based page number
+}
+```
+
+Reads the `/Annots` of existing PDFs. Annotations added with
+`AddAnnotation` round-trip through this reader. Also available as the
+cached `doc.Annotations(page)` on a `PDFDoc` handle.
+
 ### Table Detection
 
 ```go

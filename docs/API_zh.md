@@ -1101,6 +1101,18 @@ func ExtractPageDrawings(pdfData []byte, pageIndex int) ([]Drawing, error)
 func ExtractDrawingsFromFile(path string, pageIndex int) ([]Drawing, error)
 ```
 
+### 批注提取
+
+```go
+func ExtractAnnotationsFromPage(pdfData []byte, pageIndex int) ([]ExtractedAnnotation, error)
+func ExtractAnnotationsFromFile(path string, pageIndex int) ([]ExtractedAnnotation, error)
+func ExtractAllAnnotations(pdfData []byte) (map[int][]ExtractedAnnotation, error)
+```
+
+读取已有 PDF 的 `/Annots`：类型、矩形（自上而下页面点）、内容、作者、颜色。
+`AddAnnotation` 添加的批注可通过此读取端回读。亦可使用 `PDFDoc` 句柄上
+的 `doc.Annotations(page)`（已缓存）。
+
 ### 表格检测
 
 ```go

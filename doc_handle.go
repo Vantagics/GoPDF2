@@ -29,6 +29,7 @@ type PDFDoc struct {
 	drawingsCache  map[int][]Drawing
 	tablesCache    map[int][]Table
 	imagesCache    map[int][]ExtractedImage
+	annotsCache    map[int][]ExtractedAnnotation
 	infoCache      *PdfInfo
 	tocCache       []TOCEntry
 }
@@ -49,6 +50,7 @@ func OpenPDFDocument(pdfData []byte) (*PDFDoc, error) {
 		drawingsCache: map[int][]Drawing{},
 		tablesCache:   map[int][]Table{},
 		imagesCache:   map[int][]ExtractedImage{},
+		annotsCache:   map[int][]ExtractedAnnotation{},
 	}, nil
 }
 
@@ -290,4 +292,17 @@ func (d *PDFDoc) PageSizes() []PageInfo {
 		}
 	}
 	return out
+}
+
+// Annotations returns the annotations of a page (cached).
+func (d *PDFDoc) Annotations(pageIndex int) ([]ExtractedAnnotation, error) {
+	if err := d.checkPage(pageIndex); err != nil {
+		return nil, err
+	}
+	if a, ok := d.annotsCache[pageIndex]; ok {
+		return a, nil
+	}
+	annots := extractAnnotsWithParser(d.parser, pageIndex)
+	d.annotsCache[pageIndex] = annots
+	return annots, nil
 }
