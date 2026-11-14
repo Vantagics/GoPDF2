@@ -429,3 +429,50 @@ func TestPDFDocPasswordAndSurface(t *testing.T) {
 		t.Errorf("fonts: %v", err)
 	}
 }
+
+// TestPDFDocFormFields verifies form field reading through the handle
+// (PyMuPDF widgets parity).
+func TestPDFDocFormFields(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	if err := pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf"); err != nil {
+		t.Fatal(err)
+	}
+	pdf.AddPage()
+	if err := pdf.AddTextField("fullname", 120, 35, 200, 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := pdf.ModifyFormFieldValue("fullname", "Jane Q. Tester"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "fields.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+
+	doc, err := OpenPDFDocument(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !doc.HasForms() {
+		t.Errorf("HasForms = false")
+	}
+	fields := doc.FormFields()
+	if len(fields) != 1 {
+		t.Fatalf("fields = %d, want 1", len(fields))
+	}
+	f := fields[0]
+	if f.Name != "fullname" {
+		t.Errorf("name = %q", f.Name)
+	}
+	if f.Value != "Jane Q. Tester" {
+		t.Errorf("value = %q", f.Value)
+	}
+	if f.Type != FormFieldText {
+		t.Errorf("type = %v", f.Type)
+	}
+	if f.W < 150 || f.H < 10 {
+		t.Errorf("rect = %.0fx%.0f", f.W, f.H)
+	}
+}

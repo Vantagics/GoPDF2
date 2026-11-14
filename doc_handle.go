@@ -2,6 +2,7 @@ package gopdf
 
 import (
 	"fmt"
+	"strings"
 )
 
 // ============================================================
@@ -23,15 +24,16 @@ import (
 type PDFDoc struct {
 	parser *rawPDFParser
 
-	linesCache     map[int][]TextLine
-	parasCache     map[int][]TextParagraph
-	wordsCache     map[int][]TextWord
-	drawingsCache  map[int][]Drawing
-	tablesCache    map[int][]Table
-	imagesCache    map[int][]ExtractedImage
-	annotsCache    map[int][]ExtractedAnnotation
-	infoCache      *PdfInfo
-	tocCache       []TOCEntry
+	linesCache    map[int][]TextLine
+	parasCache    map[int][]TextParagraph
+	wordsCache    map[int][]TextWord
+	drawingsCache map[int][]Drawing
+	tablesCache   map[int][]Table
+	imagesCache   map[int][]ExtractedImage
+	annotsCache   map[int][]ExtractedAnnotation
+	infoCache     *PdfInfo
+	tocCache      []TOCEntry
+	rootObj       *rawPDFObject
 }
 
 // OpenPDFDocument parses raw PDF bytes once and returns a document handle
@@ -360,4 +362,111 @@ func (d *PDFDoc) Formatted(pageIndex int, format TextExtractionFormat) (interfac
 	default:
 		return nil, fmt.Errorf("unsupported format: %d", format)
 	}
+}
+
+// HasForms reports whether the document contains an AcroForm.
+func (d *PDFDoc) HasForms() bool {
+	if d.rootObj == nil {
+		obj, ok := d.parser.objects[d.parser.root]
+		if !ok {
+			return false
+		}
+		d.rootObj = &obj
+	}
+	return extractRef(d.rootObj.dict, "/AcroForm") > 0
+}
+
+// FormFields reads the interactive form fields of the document (PyMuPDF
+// widgets parity): name, type, rectangle, current value.
+func (d *PDFDoc) FormFields() []FormField {
+	return extractFormFieldsWithParser(d.parser)
+}
+
+// extractFormFieldsWithParser walks /AcroForm /Fields and reads the core
+// field properties.
+func extractFormFieldsWithParser(parser *rawPDFParser) []FormField {
+	if parser.root <= 0 {
+		return nil
+	}
+	rootObj, ok := parser.objects[parser.root]
+	if !ok {
+		return nil
+	}
+	acroRef := extractRef(rootObj.dict, "/AcroForm")
+	if acroRef <= 0 {
+		return nil
+	}
+	acroObj, ok := parser.objects[acroRef]
+	if !ok {
+		return nil
+	}
+	var fields []FormField
+	for _, ref := range extractRefArray(acroObj.dict, "/Fields") {
+		obj, ok := parser.objects[ref]
+		if !ok {
+			continue
+		}
+		f := FormField{
+			Name: extractStringFromDict(obj.dict, "/T"),
+		}
+		switch extractName(obj.dict, "/FT") {
+		case "Btn":
+			f.Type = FormFieldCheckbox
+		case "Ch":
+			f.Type = FormFieldChoice
+		case "Sig":
+			f.Type = FormFieldSignature
+		default:
+			f.Type = FormFieldText
+		}
+		if r := extractNumberArray(obj.dict, "/Rect"); len(r) >= 4 {
+			// widget rects are PDF y-up; convert to top-down against the
+			// field's own page box when resolvable
+			f.X, f.W = r[0], r[2]-r[0]
+			f.H = r[3] - r[1]
+			f.Y = r[3]
+		}
+		// value: string or name (/Yes)
+		if v := extractStringFromDict(obj.dict, "/V"); v != "" {
+			f.Value = v
+		} else if vi := stringsIndex(obj.dict, "/V"); vi >= 0 {
+			rest := trimSpaces(obj.dict[vi+2:])
+			if strings.HasPrefix(rest, "/") {
+				f.Value = rest[1:minStr(len(rest), 1+firstWordLen(rest[1:]))]
+			}
+		}
+		fields = append(fields, f)
+	}
+	return fields
+}
+
+func stringsIndex(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+func trimSpaces(s string) string {
+	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t' || s[0] == '\r' || s[0] == '\n') {
+		s = s[1:]
+	}
+	return s
+}
+
+func firstWordLen(s string) int {
+	n := 0
+	for n < len(s) && s[n] != ' ' && s[n] != '\t' && s[n] != '\r' && s[n] != '\n' && s[n] != '/' {
+		n++
+	}
+	return n
+}
+
+func minStr(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

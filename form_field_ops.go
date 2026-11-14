@@ -333,7 +333,12 @@ func (gp *GoPdf) FlattenFormFields() error {
 		if text == "" {
 			continue
 		}
-		_ = gp.CellWithOption(&Rect{W: ffObj.field.W, H: ffObj.field.H}, text, CellOption{Align: Left | Top})
+		if strings.Contains(text, "\n") {
+			// multi-line values wrap inside the field box
+			_ = gp.MultiCellWithOption(&Rect{W: ffObj.field.W, H: ffObj.field.H}, text, CellOption{Align: Left | Top})
+		} else {
+			_ = gp.CellWithOption(&Rect{W: ffObj.field.W, H: ffObj.field.H}, text, CellOption{Align: Left | Top})
+		}
 	}
 
 	// restore the caller's page
