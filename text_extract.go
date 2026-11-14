@@ -872,6 +872,23 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 	)
 	pageHeight := ctx.mediaBox[3] - ctx.mediaBox[1]
 
+	// Graphics-state stack for q/Q. A cm inside a q...Q group must not leak
+	// into text positioned after the group — images are drawn with a
+	// scaling cm (e.g. "200 0 0 100 72 642 cm /Im Do Q") and losing the Q
+	// restore placed every later fragment at that matrix.
+	ctmStack := make([][4]float64, 0, 8) // a, d, e, f
+	pushCTM := func() {
+		ctmStack = append(ctmStack, [4]float64{ctmA, ctmD, ctmE, ctmF})
+	}
+	popCTM := func() {
+		if len(ctmStack) == 0 {
+			return
+		}
+		top := ctmStack[len(ctmStack)-1]
+		ctmStack = ctmStack[:len(ctmStack)-1]
+		ctmA, ctmD, ctmE, ctmF = top[0], top[1], top[2], top[3]
+	}
+
 	stack := make([]float64, 0, 64)
 	var scratch [8]float64 // reused by popN — operator arity is at most 6 (Tm/cm)
 	popN := func(n int) []float64 {
@@ -1177,10 +1194,17 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 			}
 		case "cm":
 			args := popN(6)
-			ctmA = args[0]
-			ctmD = args[3]
-			ctmE = args[4]
-			ctmF = args[5]
+			// CTM := cm × CTM (spec 4.2.3): a point already expressed in the
+			// old ctm is appended by this cm, so translations and scales
+			// compound instead of replacing each other.
+			ctmA = args[0] * ctmA
+			ctmD = args[3] * ctmD
+			ctmE = args[0]*ctmE + args[4]
+			ctmF = args[3]*ctmF + args[5]
+		case "q":
+			pushCTM()
+		case "Q":
+			popCTM()
 		case "Do":
 			// Form XObjects may carry more text (stamps, letterheads,
 			// figure annotations). Recurse into /Subtype /Form streams with
