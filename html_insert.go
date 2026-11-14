@@ -1423,11 +1423,25 @@ func (r *htmlRenderer) renderTextLines(lines [][]textFragment, state htmlRenderS
 	for li, line := range lines {
 		// page overflow check
 		lh := r.lineHeightOf(lineMaxState(line))
+		// An inline image is taller than a text line: the cursor must skip
+		// the whole bitmap, and the overflow/pagination check must compare
+		// against it. Otherwise a 600pt figure occupies one 14pt line — the
+		// flow draws later text over it and the box clips.
+		for i := range line {
+			if line[i].kind == fragImage && line[i].img != nil && line[i].img.h > lh {
+				lh = line[i].img.h
+			}
+		}
 		if !r.paginate {
+			// A line still draws when its top edge sits inside the box; only
+			// a line that starts past the bottom is clipped. The restored
+			// <p> margins must not swallow the first line of a tight box
+			// (a brand <p> under an 18pt cover strip).
+			//
 			// inside a table cell the inner box is smaller than one line
 			// height (row height minus padding) — clipping here would drop
 			// all cell text, so cells are exempt from the legacy clip
-			if r.inTableCell == 0 && r.cursorY-r.boxY+lh > r.boxH {
+			if r.inTableCell == 0 && r.cursorY-r.boxY >= r.boxH {
 				return nil // clip (legacy box behavior)
 			}
 		} else {
