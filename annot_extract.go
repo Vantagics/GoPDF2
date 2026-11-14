@@ -96,9 +96,9 @@ func extractAnnotsWithParser(parser *rawPDFParser, pageIndex int) []ExtractedAnn
 			Type: extractName(dict, "/Subtype"),
 			Page: pageIndex + 1,
 		}
-		// links and popups are separate APIs (page.get_links parity) —
-		// not returned by the annotations reader
-		if a.Type == "Link" || a.Type == "Popup" {
+		// links, popups and widgets are separate APIs (page.get_links /
+		// form fields parity) — not returned by the annotations reader
+		if a.Type == "Link" || a.Type == "Popup" || a.Type == "Widget" {
 			continue
 		}
 		// rectangle: PDF y-up [x1 y1 x2 y2] -> top-down
