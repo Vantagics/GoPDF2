@@ -361,3 +361,71 @@ func TestTextAlphaExtraction(t *testing.T) {
 		t.Errorf("alpha = %d, want ~128 (0.5)", words[0].Alpha)
 	}
 }
+
+// TestPDFDocPasswordAndSurface verifies encrypted-document handling and the
+// extended handle surface (links, fonts, formatted output).
+func TestPDFDocPasswordAndSurface(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf")
+	pdf.SetFont("lib", "", 12)
+	pdf.AddPage()
+	pdf.SetXY(50, 60)
+	_ = pdf.Cell(nil, "Encrypted handle text")
+	pdf.AddAnnotation(AnnotationOption{X: 50, Y: 100, W: 100, H: 20, Type: AnnotText, Content: "note"})
+	// a link annotation (URI)
+	pdf.AddExternalLink("https://example.com", 50, 130, 100, 20)
+	if err := pdf.SetEncryption(AESEncryptionConfig{
+		Method:        EncryptRC4V2,
+		UserPassword:  "userpass",
+		OwnerPassword: "ownerpass",
+		Permissions:   PermissionsPrint,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "enc.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+
+	// without password: extraction yields nothing usable
+	blocked, err := OpenPDFDocumentWithPassword(data, "wrongpass")
+	if err == nil {
+		lines, _ := blocked.Lines(0)
+		if len(lines) > 0 && strings.Contains(lines[0].Text, "Encrypted") {
+			t.Errorf("wrong password decrypted the document")
+		}
+	}
+
+	// with password: full surface
+	doc, err := OpenPDFDocumentWithPassword(data, "userpass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	txt, err := doc.Text(0)
+	if err != nil || !strings.Contains(txt, "Encrypted handle text") {
+		t.Errorf("doc.Text = %q err=%v", txt, err)
+	}
+	if _, err := doc.Formatted(0, FormatJSON); err != nil {
+		t.Errorf("Formatted JSON: %v", err)
+	}
+	html, err := doc.Formatted(0, FormatHTML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html.(string), "Encrypted") {
+		t.Errorf("Formatted HTML missing text")
+	}
+	annots, _ := doc.Annotations(0)
+	if len(annots) != 1 {
+		t.Errorf("annotations = %d", len(annots))
+	}
+	links, _ := doc.Links(0)
+	if len(links) == 0 {
+		t.Errorf("links = 0")
+	}
+	if _, err := doc.Fonts(0); err != nil {
+		t.Errorf("fonts: %v", err)
+	}
+}

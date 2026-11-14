@@ -306,3 +306,58 @@ func (d *PDFDoc) Annotations(pageIndex int) ([]ExtractedAnnotation, error) {
 	d.annotsCache[pageIndex] = annots
 	return annots, nil
 }
+
+// OpenPDFDocumentWithPassword parses an encrypted PDF into a document
+// handle, decrypting with the given user or owner password.
+func OpenPDFDocumentWithPassword(pdfData []byte, password string) (*PDFDoc, error) {
+	decrypted := pdfData
+	if detectEncryption(pdfData) > 0 {
+		dc, err := authenticate(pdfData, password)
+		if err != nil {
+			return nil, err
+		}
+		if dc != nil {
+			decrypted = decryptPDF(pdfData, dc)
+		}
+	}
+	return OpenPDFDocument(decrypted)
+}
+
+// Links returns the link annotations of a page.
+func (d *PDFDoc) Links(pageIndex int) ([]ExtractedLink, error) {
+	if err := d.checkPage(pageIndex); err != nil {
+		return nil, err
+	}
+	return extractLinksFromPage(d.parser, d.parser.pages[pageIndex], pageIndex), nil
+}
+
+// Fonts returns the fonts used by a page.
+func (d *PDFDoc) Fonts(pageIndex int) ([]ExtractedFont, error) {
+	if err := d.checkPage(pageIndex); err != nil {
+		return nil, err
+	}
+	return extractFontsFromResources(d.parser, d.parser.pages[pageIndex].resources), nil
+}
+
+// Formatted returns the page text in the requested format
+// (FormatText / FormatBlocks / FormatWords / FormatHTML / FormatJSON).
+func (d *PDFDoc) Formatted(pageIndex int, format TextExtractionFormat) (interface{}, error) {
+	if err := d.checkPage(pageIndex); err != nil {
+		return nil, err
+	}
+	texts := d.runs(pageIndex)
+	switch format {
+	case FormatText:
+		return formatAsText(texts), nil
+	case FormatBlocks:
+		return formatAsBlocks(texts), nil
+	case FormatWords:
+		return formatAsWords(texts), nil
+	case FormatHTML:
+		return formatAsHTML(texts, pageIndex), nil
+	case FormatJSON:
+		return formatAsJSON(texts, pageIndex, d.parser)
+	default:
+		return nil, fmt.Errorf("unsupported format: %d", format)
+	}
+}
