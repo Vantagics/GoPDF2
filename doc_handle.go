@@ -31,6 +31,7 @@ type PDFDoc struct {
 	tablesCache   map[int][]Table
 	imagesCache   map[int][]ExtractedImage
 	annotsCache   map[int][]ExtractedAnnotation
+	labelsCache   []PageLabel
 	infoCache     *PdfInfo
 	tocCache      []TOCEntry
 	rootObj       *rawPDFObject

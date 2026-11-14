@@ -1159,6 +1159,18 @@ func GetPDFInfoFromFile(path string) (PdfInfo, error)
 
 读取 `/Info` 字典：标题、作者、主题、关键词、创建者、生产者、创建/修改日期。写入侧为 `SetInfo(PdfInfo)`。
 
+### 页面标签（读取）
+
+```go
+func ExtractPageLabels(pdfData []byte) ([]PageLabel, error)
+func ExtractPageLabelsFromFile(path string) ([]PageLabel, error)
+```
+
+读取已有 PDF 的页面标签范围（`/PageLabels` 数字树）：样式（`D` 十进制、
+`r`/`R` 罗马数字、`a`/`A` 字母）、前缀与起始编号——与写入端
+`SetPageLabels` 使用相同的 `PageLabel` 值。亦可使用 `PDFDoc` 句柄上的
+`doc.PageLabels()`（已缓存）与 `doc.Rotation(page)`。
+
 ### 已有 PDF 的目录（读取）
 
 ```go

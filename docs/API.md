@@ -1180,6 +1180,19 @@ func GetPDFInfoFromFile(path string) (PdfInfo, error)
 
 Reads the `/Info` dictionary: title, author, subject, keywords, creator, producer, creation and modification dates. The writer side is `SetInfo(PdfInfo)`.
 
+### Page Labels (read)
+
+```go
+func ExtractPageLabels(pdfData []byte) ([]PageLabel, error)
+func ExtractPageLabelsFromFile(path string) ([]PageLabel, error)
+```
+
+Reads the page label ranges of an existing PDF (the `/PageLabels` number
+tree): style (`D` decimal, `r`/`R` roman, `a`/`A` alpha), prefix and
+start number — the same `PageLabel` values the writer's `SetPageLabels`
+takes. Also available as the cached `doc.PageLabels()` on a `PDFDoc`
+handle, together with `doc.Rotation(page)`.
+
 ### TOC of Existing PDFs (read)
 
 ```go
