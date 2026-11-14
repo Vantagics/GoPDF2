@@ -32,10 +32,21 @@ const (
 	resPNGPath   = "./test/res/PNG_transparency_demonstration_1.png"
 	resPNGPath2  = "./test/res/gopher02.png"
 	resTestPDF   = "./examples/outline_example/outline_demo.pdf"
-	resOutDir    = "./test/out"
 	fontFamily   = "LiberationSerif"
 	fontFamily2  = "Ubuntu-L"
 )
+
+// resOutDir is the shared scratch directory for test outputs. Outputs are
+// throwaway and must never land in the source tree: the module cache (and
+// any read-only checkout) rejects writes into it. Created once per test
+// binary; the OS reaps the temp tree.
+var resOutDir = func() string {
+	dir, err := os.MkdirTemp("", "gopdf-test-out")
+	if err != nil {
+		panic(err)
+	}
+	return dir
+}()
 
 // helper: ensure output directory exists
 func ensureOutDir(t *testing.T) {

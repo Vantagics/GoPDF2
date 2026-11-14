@@ -111,7 +111,7 @@ func TestDeleteImages_WritePdf(t *testing.T) {
 
 	pdf.DeleteImages(1)
 
-	outPath := "test/out/test_delete_images.pdf"
+	outPath := resOutDir + "/test_delete_images.pdf"
 	err := pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestRecompressImages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outPath := "test/out/test_recompress_src.pdf"
+	outPath := resOutDir + "/test_recompress_src.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestRecompressImages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outPath2 := "test/out/test_recompress_result.pdf"
+	outPath2 := resOutDir + "/test_recompress_result.pdf"
 	err = os.WriteFile(outPath2, recompressed, 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestRecompressImages_NoImages(t *testing.T) {
 	pdf.Start(Config{PageSize: *PageSizeA4})
 	pdf.AddPage()
 
-	outPath := "test/out/test_recompress_empty.pdf"
+	outPath := resOutDir + "/test_recompress_empty.pdf"
 	pdf.WritePdf(outPath)
 
 	data, _ := os.ReadFile(outPath)
@@ -204,7 +204,7 @@ func TestImageSVG(t *testing.T) {
   <polygon points="150,120 180,180 120,180" fill="#9900cc"/>
 </svg>`
 
-	svgPath := "test/out/test_input.svg"
+	svgPath := resOutDir + "/test_input.svg"
 	err := os.WriteFile(svgPath, []byte(svgContent), 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +224,7 @@ func TestImageSVG(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outPath := "test/out/test_svg_insert.pdf"
+	outPath := resOutDir + "/test_svg_insert.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +249,7 @@ func TestImageSVGFromBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outPath := "test/out/test_svg_from_bytes.pdf"
+	outPath := resOutDir + "/test_svg_from_bytes.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestImageSVG_Path(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outPath := "test/out/test_svg_path.pdf"
+	outPath := resOutDir + "/test_svg_path.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +306,7 @@ func TestRenderPageToImage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	outPath := "test/out/test_render_src.pdf"
+	outPath := resOutDir + "/test_render_src.pdf"
 	err = pdf.WritePdf(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +330,7 @@ func TestRenderPageToImage(t *testing.T) {
 	}
 
 	// Save as PNG
-	outImg := "test/out/test_render_page.png"
+	outImg := resOutDir + "/test_render_page.png"
 	f, err := os.Create(outImg)
 	if err != nil {
 		t.Fatal(err)
@@ -345,7 +345,7 @@ func TestRenderPageToImage_HighDPI(t *testing.T) {
 	pdf.Start(Config{PageSize: *PageSizeA4})
 	pdf.AddPage()
 
-	outPath := "test/out/test_render_highdpi_src.pdf"
+	outPath := resOutDir + "/test_render_highdpi_src.pdf"
 	pdf.WritePdf(outPath)
 
 	data, _ := os.ReadFile(outPath)
@@ -369,7 +369,7 @@ func TestRenderPageToImage_CustomBackground(t *testing.T) {
 	pdf.Start(Config{PageSize: *PageSizeA4})
 	pdf.AddPage()
 
-	outPath := "test/out/test_render_bg_src.pdf"
+	outPath := resOutDir + "/test_render_bg_src.pdf"
 	pdf.WritePdf(outPath)
 
 	data, _ := os.ReadFile(outPath)
@@ -400,7 +400,7 @@ func TestRenderAllPagesToImages(t *testing.T) {
 	pdf.AddPage()
 	pdf.AddPage()
 
-	outPath := "test/out/test_render_multi_src.pdf"
+	outPath := resOutDir + "/test_render_multi_src.pdf"
 	pdf.WritePdf(outPath)
 
 	data, _ := os.ReadFile(outPath)
@@ -420,7 +420,7 @@ func TestRenderPageToImage_InvalidPage(t *testing.T) {
 	pdf.Start(Config{PageSize: *PageSizeA4})
 	pdf.AddPage()
 
-	outPath := "test/out/test_render_invalid_src.pdf"
+	outPath := resOutDir + "/test_render_invalid_src.pdf"
 	pdf.WritePdf(outPath)
 
 	data, _ := os.ReadFile(outPath)

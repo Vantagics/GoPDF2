@@ -2,6 +2,7 @@ package gopdf_test
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -110,7 +111,7 @@ func TestTable(t *testing.T) {
 	}
 
 	// Save the PDF to the specified path
-	err = pdf.WritePdf("examples/table/example_table.pdf")
+	err = pdf.WritePdf(filepath.Join(t.TempDir(), "example_table.pdf"))
 	if err != nil {
 		t.Errorf("Error saving PDF: %v", err)
 	}
@@ -217,7 +218,7 @@ func TestTableCenter(t *testing.T) {
 	}
 
 	// Save the PDF to the specified path
-	err = pdf.WritePdf("examples/table/example_table_center.pdf")
+	err = pdf.WritePdf(filepath.Join(t.TempDir(), "example_table_center.pdf"))
 	if err != nil {
 		t.Errorf("Error saving PDF: %v", err)
 	}
@@ -374,7 +375,7 @@ func TestTableWithStyledRows(t *testing.T) {
 	}
 
 	// Save the PDF to the specified path
-	err = pdf.WritePdf("examples/table/example_table_with_styled_row.pdf")
+	err = pdf.WritePdf(filepath.Join(t.TempDir(), "example_table_with_styled_row.pdf"))
 	if err != nil {
 		t.Errorf("Error saving PDF: %v", err)
 	}
@@ -421,11 +422,10 @@ func TestTable_AutoHeightAndPagination(t *testing.T) {
 	if err := table.DrawTable(); err != nil {
 		t.Fatal(err)
 	}
-	path := "test_table_paginate.pdf"
+	path := filepath.Join(t.TempDir(), "test_table_paginate.pdf")
 	if err := pdf.WritePdf(path); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
