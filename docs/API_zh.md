@@ -1182,7 +1182,7 @@ opt := gopdf.RenderOption{DPI: 150, Clip: &gopdf.ClipRect{X: 100, Y: 100, W: 200
 img, err := gopdf.RenderPageToImage(data, 0, opt)
 ```
 
-`Clip` 将渲染限制在页面的一个区域内（视觉点坐标）；渲染遵循 `/Rotate`（输出画布与视觉页面方向一致，并应用 2 倍超采样以保证细线保真度）。
+`Clip` 将渲染限制在页面的一个区域内（视觉点坐标）；渲染遵循 `/Rotate`（输出画布与视觉页面方向一致，自适应超采样保证细线保真度）与 `/CropBox`（可见区域决定 `doc.PageSize` 与渲染画布尺寸）。
 
 ---
 

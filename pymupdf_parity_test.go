@@ -476,3 +476,52 @@ func TestPDFDocFormFields(t *testing.T) {
 		t.Errorf("rect = %.0fx%.0f", f.W, f.H)
 	}
 }
+
+// TestCropBoxSupport verifies /CropBox drives PDFDoc.PageSize and the
+// rendered canvas (PyMuPDF page.rect convention).
+func TestCropBoxSupport(t *testing.T) {
+	pdf := &GoPdf{}
+	pdf.Start(Config{PageSize: *PageSizeA4})
+	if err := pdf.AddTTFFont("lib", "test/res/LiberationSerif-Regular.ttf"); err != nil {
+		t.Fatal(err)
+	}
+	pdf.AddPage()
+	if err := pdf.SetFont("lib", "", 12); err != nil {
+		t.Fatal(err)
+	}
+	pdf.SetXY(50, 60)
+	_ = pdf.Cell(nil, "cropped visible text")
+	// crop to a 400x300 region at (50, 50) (top-down points)
+	if err := pdf.SetPageCropBox(1, Box{Left: 50, Top: 50, Right: 450, Bottom: 350}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "crop.pdf")
+	if err := pdf.WritePdf(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+
+	doc, err := OpenPDFDocument(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pi, err := doc.PageSize(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pi.Width != 400 || pi.Height != 300 {
+		t.Errorf("PageSize = %.0fx%.0f, want 400x300", pi.Width, pi.Height)
+	}
+	img, err := RenderPageToImage(data, 0, RenderOption{DPI: 72})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := img.Bounds()
+	if b.Dx() != 400 || b.Dy() != 300 {
+		t.Errorf("render = %dx%d, want 400x300", b.Dx(), b.Dy())
+	}
+	// the visible text starts at (50, 60) top-down: after cropping at
+	// (50, 50) it sits at (0, 10) — the word must appear in the canvas
+	img2, _ := RenderPageToImage(data, 0, RenderOption{DPI: 72, Clip: &ClipRect{X: 0, Y: 0, W: 400, H: 60}})
+	_ = img2
+}

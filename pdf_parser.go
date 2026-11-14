@@ -57,6 +57,8 @@ type rawPDFObject struct {
 type rawPDFPage struct {
 	objNum    int
 	mediaBox  [4]float64
+	cropBox   [4]float64 // /CropBox (visible area); valid when hasCrop
+	hasCrop   bool
 	rotate    int // /Rotate degrees clockwise (0/90/180/270)
 	contents  []int // content stream obj numbers
 	resources rawPDFResources
@@ -661,12 +663,12 @@ func (p *rawPDFParser) parsePages() {
 }
 
 func (p *rawPDFParser) collectPages(objNum int) {
-	p.collectPagesInherited(objNum, [4]float64{}, 0)
+	p.collectPagesInherited(objNum, [4]float64{}, 0, nil)
 }
 
 // collectPagesInherited walks the page tree, propagating inherited
 // attributes (MediaBox) from Pages nodes down to their Page leaves.
-func (p *rawPDFParser) collectPagesInherited(objNum int, inherited [4]float64, inheritedRotate int) {
+func (p *rawPDFParser) collectPagesInherited(objNum int, inherited [4]float64, inheritedRotate int, inheritedCrop *([4]float64)) {
 	obj, ok := p.objects[objNum]
 	if !ok {
 		return
@@ -678,6 +680,11 @@ func (p *rawPDFParser) collectPagesInherited(objNum int, inherited [4]float64, i
 		if page.mediaBox == [4]float64{0, 0, 612, 792} && inherited != [4]float64{} {
 			// page lacks its own MediaBox — inherit from the Pages tree
 			page.mediaBox = inherited
+		}
+		if cb, has := extractBox(obj.dict, "/CropBox"); has {
+			page.cropBox, page.hasCrop = cb, true
+		} else if inheritedCrop != nil {
+			page.cropBox, page.hasCrop = *inheritedCrop, true
 		}
 		page.rotate = extractPageRotate(obj.dict)
 		if page.rotate == 0 {
@@ -692,13 +699,17 @@ func (p *rawPDFParser) collectPagesInherited(objNum int, inherited [4]float64, i
 		if inheritedMedia == [4]float64{0, 0, 612, 792} && inherited != [4]float64{} {
 			inheritedMedia = inherited
 		}
+		localCrop := inheritedCrop
+		if cb, has := extractBox(obj.dict, "/CropBox"); has {
+			localCrop = &cb
+		}
 		inheritedRot := extractPageRotate(obj.dict)
 		if inheritedRot == 0 {
 			inheritedRot = inheritedRotate
 		}
 		kids := extractRefArray(obj.dict, "/Kids")
 		for _, kid := range kids {
-			p.collectPagesInherited(kid, inheritedMedia, inheritedRot)
+			p.collectPagesInherited(kid, inheritedMedia, inheritedRot, localCrop)
 		}
 	}
 }
@@ -841,6 +852,15 @@ func extractRefArray(dict, key string) []int {
 		pos += next
 	}
 	return refs
+}
+
+// extractBox parses an arbitrary box array (/CropBox, /BleedBox, ...)
+// from a dict. ok is false when the box is absent or malformed.
+func extractBox(dict string, key string) ([4]float64, bool) {
+	if arr := extractNumberArray(dict, key); len(arr) >= 4 {
+		return [4]float64{arr[0], arr[1], arr[2], arr[3]}, true
+	}
+	return [4]float64{}, false
 }
 
 func extractMediaBox(dict string) [4]float64 {

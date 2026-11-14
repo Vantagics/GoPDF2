@@ -1203,7 +1203,7 @@ opt := gopdf.RenderOption{DPI: 150, Clip: &gopdf.ClipRect{X: 100, Y: 100, W: 200
 img, err := gopdf.RenderPageToImage(data, 0, opt)
 ```
 
-`Clip` restricts rendering to a region of the page in visual points; rendering honors `/Rotate` (the output canvas matches the visual page orientation, and 2× supersampling is applied for hairline fidelity).
+`Clip` restricts rendering to a region of the page in visual points; rendering honors `/Rotate` (the output canvas matches the visual page orientation, adaptive supersampling for hairline fidelity) and `/CropBox` (the visible area drives `doc.PageSize` and the rendered canvas).
 
 ---
 

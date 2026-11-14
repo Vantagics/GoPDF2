@@ -279,6 +279,11 @@ func (d *PDFDoc) PageSize(pageIndex int) (PageInfo, error) {
 	page := d.parser.pages[pageIndex]
 	w := page.mediaBox[2] - page.mediaBox[0]
 	h := page.mediaBox[3] - page.mediaBox[1]
+	if page.hasCrop {
+		// the visible area is the CropBox (PyMuPDF page.rect convention)
+		w = page.cropBox[2] - page.cropBox[0]
+		h = page.cropBox[3] - page.cropBox[1]
+	}
 	if page.rotate == 90 || page.rotate == 270 {
 		w, h = h, w
 	}
