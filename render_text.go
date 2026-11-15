@@ -43,6 +43,9 @@ type renderTextState struct {
 	// state at draw time — form XObjects and cm operators compose into it.
 	ctmA, ctmD float64
 	ctmE, ctmF float64
+	// clip rect in device pixels (nil = unclipped), mirrored from the
+	// graphics state by W n.
+	clip *[4]int
 }
 
 // effFontSize returns the rendered font size: Tf sets the nominal size and
@@ -147,7 +150,7 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 		return
 	}
 	if font.t1 != nil {
-		drawType1Run(img, font.t1, codes, fontSize, penX, penY, fill, csPx, wsPx)
+		drawType1Run(img, font.t1, codes, fontSize, penX, penY, fill, csPx, wsPx, ts.clip)
 		return
 	}
 	if font.ttf == nil {
@@ -177,7 +180,7 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 			continue
 		}
 		// glyph origin at pen, y flipped (font y-up -> image y-down)
-		drawGlyphContours(img, contours, scale, penX, penY, fill)
+		drawGlyphContours(img, contours, scale, penX, penY, fill, ts.clip)
 		penX += font.ttf.glyphWidth(gid)*scale + csPx
 		if isSpace {
 			penX += wsPx
@@ -186,7 +189,7 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 }
 
 // drawGlyphContours flattens quadratic outlines and fills them.
-func drawGlyphContours(img *image.RGBA, contours [][]glyphPt, scale, penX, penY float64, fill color.RGBA) {
+func drawGlyphContours(img *image.RGBA, contours [][]glyphPt, scale, penX, penY float64, fill color.RGBA, clip *[4]int) {
 	var polys [][]image.Point
 	for _, contour := range contours {
 		if len(contour) < 3 {
@@ -245,14 +248,29 @@ func drawGlyphContours(img *image.RGBA, contours [][]glyphPt, scale, penX, penY 
 			polys = append(polys, poly)
 		}
 	}
-	fillPolygonEvenOdd(img, polys, fill)
+	fillPolygonEvenOdd(img, polys, fill, clip)
 }
 
 // fillPolygonEvenOdd rasterizes polygons with the even-odd rule using a
 // scanline crossing algorithm (covers holes in glyphs like 'o').
-func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA) {
+func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA, clip *[4]int) {
 	if len(polys) == 0 {
 		return
+	}
+	// clip each polygon against the clip rect (Sutherland–Hodgman) so
+	// fills and glyph ink respect W n clip regions
+	if clip != nil {
+		clipped := make([][]image.Point, 0, len(polys))
+		for _, poly := range polys {
+			cp := clipPolyRect(poly, *clip)
+			if len(cp) >= 3 {
+				clipped = append(clipped, cp)
+			}
+		}
+		polys = clipped
+		if len(polys) == 0 {
+			return
+		}
 	}
 	// collect all edges
 	type edge struct{ x1, y1, x2, y2 float64 }
@@ -467,4 +485,59 @@ func pageFontsWithForm(parser *rawPDFParser, pageFonts map[string]int, formDict 
 		}
 	}
 	return merged
+}
+
+// clipPolyRect clips a polygon against an axis-aligned rect
+// (Sutherland–Hodgman). Clip edges: left, right, top, bottom.
+func clipPolyRect(poly []image.Point, clip [4]int) []image.Point {
+	out := poly
+	for _, side := range [4]int{0, 1, 2, 3} { // 0=left 1=top 2=right 3=bottom
+		if len(out) == 0 {
+			return nil
+		}
+		inFn := func(p image.Point) bool {
+			switch side {
+			case 0:
+				return p.X >= clip[0]
+			case 1:
+				return p.Y >= clip[1]
+			case 2:
+				return p.X <= clip[2]
+			default:
+				return p.Y <= clip[3]
+			}
+		}
+		interFn := func(a, b image.Point) image.Point {
+			// segment a→b against the side line
+			dx := b.X - a.X
+			dy := b.Y - a.Y
+			var t float64
+			switch side {
+			case 0:
+				t = float64(clip[0]-a.X) / float64(dx)
+			case 1:
+				t = float64(clip[1]-a.Y) / float64(dy)
+			case 2:
+				t = float64(clip[2]-a.X) / float64(dx)
+			default:
+				t = float64(clip[3]-a.Y) / float64(dy)
+			}
+			return image.Point{X: a.X + int(float64(dx)*t), Y: a.Y + int(float64(dy)*t)}
+		}
+		in2 := make([]image.Point, 0, len(out)+2)
+		for i := 0; i < len(out); i++ {
+			cur, next := out[i], out[(i+1)%len(out)]
+			cIn, nIn := inFn(cur), inFn(next)
+			switch {
+			case cIn && nIn:
+				in2 = append(in2, next)
+			case cIn && !nIn:
+				in2 = append(in2, interFn(cur, next))
+			case !cIn && nIn:
+				in2 = append(in2, interFn(cur, next), next)
+			}
+		}
+		out = in2
+	}
+	return out
 }

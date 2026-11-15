@@ -289,13 +289,17 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 		ctmE, ctmF = (*ctmIn)[2], (*ctmIn)[3]
 	}
 
-	// graphics state stack for q/Q (CTM + colors + line width)
+	// graphics state stack for q/Q (CTM + colors + line width + clip)
 	type graphicsState struct {
 		ctmA, ctmD, ctmE, ctmF float64
 		fill, stroke           color.RGBA
 		lineWidth              float64
+		clip                   *[4]int
 	}
 	var gsStack []graphicsState
+	// axis-aligned device-space clip rect (x0, y0, x1, y1); nil = unclipped
+	var clip *[4]int
+	clipPending := false
 
 	// path construction (m/l) in device pixels, stroked by S/s
 	var pathPts [][2]float64
@@ -308,6 +312,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 	}
 	syncTextCTM := func() {
 		ts.ctmA, ts.ctmD, ts.ctmE, ts.ctmF = ctmA, ctmD, ctmE, ctmF
+		ts.clip = clip
 	}
 	syncTextCTM()
 	inText := false
@@ -477,7 +482,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				stroked := next == "S" || next == "s" || next == "B" || next == "b"
 				if filled {
 					// paint the interior (cell/line backgrounds, shading)
-					drawRectFill(img, dx, dy, dw, dh, fillColor)
+					drawRectFill(img, dx, dy, dw, dh, fillColor, clip)
 				}
 				if stroked {
 					drawRectOnImage(img, dx, dy, dw, dh, 1.0, strokeColor)
@@ -556,7 +561,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				if debugRender {
 					fmt.Printf("DBG stroke n=%d pts=%v w=%.1f\n", len(dev), dev, lineWidth*scale)
 				}
-				strokePolyline(img, dev, lineWidth*scale, strokeColor)
+				strokePolyline(img, dev, lineWidth*scale, strokeColor, clip)
 			}
 			pathPts = pathPts[:0]
 			stack = stack[:0]
@@ -571,7 +576,35 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			stack = stack[:0]
 
 		case "n":
-			// End path without fill/stroke
+			// End path without fill/stroke; apply a pending clip
+			if clipPending {
+				clipPending = false
+				if len(pathPts) >= 2 {
+					minX, minY, maxX, maxY := 1<<30, 1<<30, -(1<<30), -(1<<30)
+					for _, pt := range pathPts {
+						px := int(pt[0] * scale)
+						py := int((pageH - pt[1]) * scale)
+						if px < minX {
+							minX = px
+						}
+						if px > maxX {
+							maxX = px
+						}
+						if py < minY {
+							minY = py
+						}
+						if py > maxY {
+							maxY = py
+						}
+					}
+					c := [4]int{minX, minY, maxX, maxY}
+					clip = &c
+				} else {
+					clip = nil
+				}
+				syncTextCTM()
+			}
+			pathPts = pathPts[:0]
 			stack = stack[:0]
 
 		case "w":
@@ -585,10 +618,11 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			}
 
 		case "q":
-			// Save graphics state (CTM + colors + line width)
+			// Save graphics state (CTM + colors + line width + clip)
 			gsStack = append(gsStack, graphicsState{
 				ctmA: ctmA, ctmD: ctmD, ctmE: ctmE, ctmF: ctmF,
 				fill: fillColor, stroke: strokeColor, lineWidth: lineWidth,
+				clip: clip,
 			})
 		case "Q":
 			// Restore graphics state
@@ -598,11 +632,15 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				ctmA, ctmD, ctmE, ctmF = gs.ctmA, gs.ctmD, gs.ctmE, gs.ctmF
 				fillColor, strokeColor = gs.fill, gs.stroke
 				lineWidth = gs.lineWidth
+				clip = gs.clip
 				syncTextCTM()
 			}
 
 		case "W", "W*":
-			// Clipping — ignore for basic rendering
+			// Clipping: the path painted by the following "n" becomes the
+			// clip region (its bounding box — sufficient for rect clips,
+			// which is what virtually all generators emit)
+			clipPending = true
 
 		default:
 			if !strings.HasPrefix(tok, "/") {
@@ -615,7 +653,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 // drawRectOnImage draws a rectangle outline on the image.
 // strokePolyline draws connected segments with a simple thickness model:
 // hairlines get a 1px Bresenham, wider widths get 2-3 px coverage.
-func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA) {
+func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA, clip *[4]int) {
 	thick := int(wPx + 0.5)
 	if thick < 1 {
 		thick = 1
@@ -624,12 +662,12 @@ func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA
 	for i := 0; i+1 < len(pts); i++ {
 		x0, y0 := pts[i][0], pts[i][1]
 		x1, y1 := pts[i+1][0], pts[i+1][1]
-		drawThickLine(img, x0, y0, x1, y1, thick, c, bounds)
+		drawThickLine(img, x0, y0, x1, y1, thick, c, bounds, clip)
 	}
 }
 
 // drawThickLine rasterizes one segment with integer thickness.
-func drawThickLine(img *image.RGBA, x0, y0, x1, y1 float64, thick int, c color.RGBA, bounds image.Rectangle) {
+func drawThickLine(img *image.RGBA, x0, y0, x1, y1 float64, thick int, c color.RGBA, bounds image.Rectangle, clip *[4]int) {
 	dx := x1 - x0
 	dy := y1 - y0
 	steps := int(math.Abs(dx))
@@ -648,6 +686,9 @@ func drawThickLine(img *image.RGBA, x0, y0, x1, y1 float64, thick int, c color.R
 			for ox := -half; ox < thick-half; ox++ {
 				x, y := px+ox, py+oy
 				if x >= 0 && x < bounds.Max.X && y >= 0 && y < bounds.Max.Y {
+					if clip != nil && (x < clip[0] || y < clip[1] || x >= clip[2] || y >= clip[3]) {
+						continue
+					}
 					img.SetRGBA(x, y, c)
 				}
 			}
@@ -655,12 +696,38 @@ func drawThickLine(img *image.RGBA, x0, y0, x1, y1 float64, thick int, c color.R
 	}
 }
 
+// intersectRect clips the rect (x, y, w, h) against the clip rect,
+// returning a possibly empty rect.
+func intersectRect(x, y, w, h int, clip [4]int) (int, int, int, int) {
+	x0, y0 := x, y
+	x1, y1 := x+w, y+h
+	if x0 < clip[0] {
+		x0 = clip[0]
+	}
+	if y0 < clip[1] {
+		y0 = clip[1]
+	}
+	if x1 > clip[2] {
+		x1 = clip[2]
+	}
+	if y1 > clip[3] {
+		y1 = clip[3]
+	}
+	if x1 <= x0 || y1 <= y0 {
+		return 0, 0, 0, 0
+	}
+	return x0, y0, x1 - x0, y1 - y0
+}
+
 // drawRectFill paints the interior of a rectangle (device-pixel coords).
-func drawRectFill(img *image.RGBA, x, y, w, h float64, c color.RGBA) {
+func drawRectFill(img *image.RGBA, x, y, w, h float64, c color.RGBA, clip *[4]int) {
 	ix := int(x)
 	iy := int(y)
 	iw := int(w)
 	ih := int(h)
+	if clip != nil {
+		ix, iy, iw, ih = intersectRect(ix, iy, iw, ih, *clip)
+	}
 	bounds := img.Bounds()
 	for py := iy; py < iy+ih; py++ {
 		if py < 0 || py >= bounds.Max.Y {

@@ -32,9 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - callothersubr/pop now leave the operand stack available for the
   following callsubr (URW's `146 1 3 12 16 12 17 10` idiom runs subr 146)
 
+### Added
+- **Clipping (W n)**: the clip path's bounding box becomes an
+  axis-aligned clip region; q/Q save/restore it, and rect fills,
+  polyline strokes, glyph outlines (Sutherland–Hodgman polygon clip)
+  and XObject draws all respect it
+
 ### Known limitations
-- Complex vector figures with deeply nested even-odd rect fills
-  (arXiv Figure 1) render darker than the original
+- Diagram figures drawn as scaled-text compositions inside form
+  XObjects (arXiv Figure 1) render as solid blocks; the shading and
+  form-font interplay needs its own pass
 - Text with 90°-rotated writing (pdf.js bug1057544) renders blank; the
   per-glyph direction model does not support vertical text yet
 
