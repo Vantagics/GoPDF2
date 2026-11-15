@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-11-15
+
+### Added
+- **Type 1 font rendering** (`/FontFile`): PFB/PFA parsing, eexec + charstring
+  decryption, a Type 1 charstring interpreter with callsubr/flex/seac
+  support, and PDF-/Widths-driven advances — LaTeX/Nimbus documents
+  (arXiv papers, GNU manuals) now rasterize instead of rendering blank
+- **Rendering CTM**: form XObjects compose their /Matrix and the current
+  transformation matrix (with q/Q graphics-state save/restore), so scaled
+  and translated content lands correctly; text advances through TJ arrays
+  fix intra-line crowding
+- Rendering pipeline honored degenerate stream filters and /Length cuts
+  (see 2.1.0) for images as well
+
+### Known limitations
+- Intra-run glyph advances on some Type 1 documents remain tighter than
+  the glyph ink; multi-line layout, word spacing and page structure are
+  correct
+- Text with 90°-rotated writing (pdf.js bug1057544) renders blank; the
+  per-glyph direction model does not support vertical text yet
+
 ## [2.1.0] - 2026-11-15
 
 ### Fixed

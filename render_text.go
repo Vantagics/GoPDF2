@@ -20,7 +20,8 @@ import (
 // renderFont is a parsed embedded font for rasterization.
 type renderFont struct {
 	ttf      *minTTF
-	isType0  bool // Identity-H: 2-byte codes are glyph IDs
+	t1       *type1Font // Type1 (FontFile) alternative — LaTeX/Nimbus fonts
+	isType0  bool       // Identity-H: 2-byte codes are glyph IDs
 	codeSize int
 }
 
@@ -37,6 +38,11 @@ type renderTextState struct {
 	fill         color.RGBA
 	charSpacing  float64 // Tc: extra spacing per glyph
 	wordSpacing  float64 // Tw: extra spacing per space char
+
+	// Device CTM (scale/translate components) mirrored from the graphics
+	// state at draw time — form XObjects and cm operators compose into it.
+	ctmA, ctmD float64
+	ctmE, ctmF float64
 }
 
 // effFontSize returns the rendered font size: Tf sets the nominal size and
@@ -71,6 +77,43 @@ func resolveRenderFonts(parser *rawPDFParser, page rawPDFPage) map[string]*rende
 		if !ok {
 			continue
 		}
+		// Type1 (FontFile) first — LaTeX/Nimbus documents embed these;
+		// fall through to TrueType (FontFile2) otherwise.
+		if ff1Ref := extractRef(fdObj.dict, "/FontFile"); ff1Ref > 0 {
+			if ff1Obj, ok := parser.objects[ff1Ref]; ok && ff1Obj.stream != nil {
+				if t1, err := parseType1Font(ff1Obj.stream); err == nil {
+					var diffs map[byte]string
+					if encRef := extractRef(obj.dict, "/Encoding"); encRef > 0 {
+						if encObj, ok2 := parser.objects[encRef]; ok2 {
+							diffs = parseDifferences(encObj.dict)
+						}
+					} else if strings.Contains(obj.dict, "/Differences") {
+						diffs = parseDifferences(obj.dict)
+					}
+					t1.applyType1Encoding(extractName(obj.dict, "/BaseEncoding"), diffs)
+					// PDF /Widths array — authoritative advances by code
+					wArr := extractNumberArray(obj.dict, "/Widths")
+					if len(wArr) == 0 {
+						if wRef := extractRef(obj.dict, "/Widths"); wRef > 0 {
+							if wObj, ok2 := parser.objects[wRef]; ok2 {
+								src := wObj.dict
+								if src == "" {
+									src = wObj.body
+								}
+								wArr = extractNumberArray(src, "")
+							}
+						}
+					}
+					if first := extractNumValue(obj.dict, "/FirstChar"); first >= 0 {
+						for k, wv := range wArr {
+							t1.codeWidths[int(first)+k] = wv
+						}
+					}
+					fonts[name] = &renderFont{t1: t1, codeSize: 1}
+					continue
+				}
+			}
+		}
 		ff2Ref := extractRef(fdObj.dict, "/FontFile2")
 		if ff2Ref <= 0 {
 			continue
@@ -99,8 +142,15 @@ func resolveRenderFonts(parser *rawPDFParser, page rawPDFPage) map[string]*rende
 
 // drawTextRun rasterizes one text run at the given pen position (device
 // pixels), filling glyph outlines with the fill color.
-func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float64, penX, penY float64, fill color.RGBA, csPx, wsPx float64) {
-	if font == nil || font.ttf == nil || len(codes) == 0 {
+func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float64, penX, penY float64, fill color.RGBA, csPx, wsPx float64, ts *renderTextState) {
+	if font == nil || len(codes) == 0 {
+		return
+	}
+	if font.t1 != nil {
+		drawType1Run(img, font.t1, codes, fontSize, penX, penY, fill, csPx, wsPx)
+		return
+	}
+	if font.ttf == nil {
 		return
 	}
 	scale := fontSize / float64(font.ttf.unitsPerEm)
@@ -280,6 +330,52 @@ func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA)
 }
 
 // renderDrawText handles a show-text operator inside BT/ET during rendering.
+// measureTextRunDev measures a run's advance width in device pixels.
+func measureTextRunDev(font *renderFont, codes []byte, fontSizeDev, csPx, wsPx float64) float64 {
+	if font == nil || len(codes) == 0 {
+		return 0
+	}
+	if font.t1 != nil {
+		sc := fontSizeDev / 1000.0
+		w := 0.0
+		for _, code := range codes {
+			name := font.t1.encoding[code]
+			if name == "" {
+				name = standardType1Names[code]
+			}
+			if name == "" {
+				continue
+			}
+			w += font.t1.glyphWidth(name)*sc + csPx
+			if name == "space" {
+				w += wsPx
+			}
+		}
+		return w
+	}
+	if font.ttf == nil {
+		return 0
+	}
+	sc := fontSizeDev / float64(font.ttf.unitsPerEm)
+	w := 0.0
+	for i := 0; i < len(codes); i += font.codeSize {
+		var gid uint16
+		var isSpace bool
+		if font.codeSize == 2 && i+1 < len(codes) {
+			gid = uint16(codes[i])<<8 | uint16(codes[i+1])
+			isSpace = gid == 3
+		} else {
+			gid = font.ttf.charToGlyph(int(codes[i]))
+			isSpace = codes[i] == 32
+		}
+		w += font.ttf.glyphWidth(gid)*sc + csPx
+		if isSpace {
+			w += wsPx
+		}
+	}
+	return w
+}
+
 func renderDrawText(img *image.RGBA, ts *renderTextState, rawToken []byte, pageH, scale float64, fontResources map[string]*renderFont) {
 	if ts.font == nil {
 		return
@@ -293,11 +389,19 @@ func renderDrawText(img *image.RGBA, ts *renderTextState, rawToken []byte, pageH
 		// raw code bytes passed directly (TJ items are pre-stripped)
 		data = rawToken
 	}
-	penX := ts.tmX
-	penY := pageH - ts.tmY
+	size := ts.effFontSize() * math.Abs(ts.ctmA) * scale
+	csPx := ts.charSpacing * scale * math.Abs(ts.ctmA)
+	wsPx := ts.wordSpacing * scale * math.Abs(ts.ctmA)
+	penX := ts.ctmA*ts.tmX + ts.ctmE
+	penY := pageH - (ts.ctmD*ts.tmY + ts.ctmF)
 	// fontSize is in points; penX/penY are device pixels — convert the size
 	// so glyph outlines and advances render in the same device space.
-	drawTextRun(img, ts.font, data, ts.effFontSize()*scale, penX*scale, penY*scale, ts.fill, ts.charSpacing*scale, ts.wordSpacing*scale)
+	// The CTM scale (|ctmA|) carries form XObject and cm scaling.
+	drawTextRun(img, ts.font, data, size, penX*scale, penY*scale, ts.fill, csPx, wsPx, ts)
+	// advance the text position so successive runs do not overlap
+	if adv := measureTextRunDev(ts.font, data, size, csPx, wsPx); adv > 0 && scale > 0 && ts.ctmA != 0 {
+		ts.tmX += adv / (scale * ts.ctmA)
+	}
 }
 
 // renderTf handles the Tf operator: select a font resource and size.

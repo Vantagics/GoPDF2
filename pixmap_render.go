@@ -118,7 +118,7 @@ func renderParsedPage(parser *rawPDFParser, pageIndex int, opt RenderOption) (im
 
 	stream := parser.getPageContentStream(pageIndex)
 	if len(stream) > 0 {
-		renderContentStream(img, stream, parser, page, scale, pageH)
+		renderContentStream(img, stream, parser, page, scale, pageH, nil)
 	}
 
 	// /CropBox: the visible area — crop the composed page to it (user
@@ -273,16 +273,29 @@ func max2(a, b float64) float64 {
 }
 
 // renderContentStream interprets a PDF content stream and draws onto the image.
-func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, page rawPDFPage, scale, pageH float64) {
+func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, page rawPDFPage, scale, pageH float64, ctmIn *[4]float64) {
 	tokens := tokenizeBytes(stream)
 
 	var stack []float64
 	strokeColor := color.RGBA{R: 0, G: 0, B: 0, A: 255}
 	fillColor := color.RGBA{R: 0, G: 0, B: 0, A: 255}
 
-	// Current transformation matrix
+	// Current transformation matrix — seeded from the incoming CTM so
+	// content inside form XObjects inherits the form's transform.
 	ctmA, ctmD := 1.0, 1.0
 	ctmE, ctmF := 0.0, 0.0
+	if ctmIn != nil {
+		ctmA, ctmD = (*ctmIn)[0], (*ctmIn)[1]
+		ctmE, ctmF = (*ctmIn)[2], (*ctmIn)[3]
+	}
+
+	// graphics state stack for q/Q (CTM + colors + line width)
+	type graphicsState struct {
+		ctmA, ctmD, ctmE, ctmF float64
+		fill, stroke           color.RGBA
+		lineWidth              float64
+	}
+	var gsStack []graphicsState
 
 	// path construction (m/l) in device pixels, stroked by S/s
 	var pathPts [][2]float64
@@ -293,6 +306,10 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 	ts := &renderTextState{
 		fill: fillColor,
 	}
+	syncTextCTM := func() {
+		ts.ctmA, ts.ctmD, ts.ctmE, ts.ctmF = ctmA, ctmD, ctmE, ctmF
+	}
+	syncTextCTM()
 	inText := false
 
 	for i := 0; i < len(tokens); i++ {
@@ -372,21 +389,32 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				raw := renderTextOpBytes(tokens, i)
 				renderDrawText(img, ts, raw, pageH, scale, fontResources)
 			}
-		case "TJ":
-			if inText {
-				if start := findArrayStart(tokens, i); start >= 0 {
-					var run []byte
-					kern := 0.0
-					effSize := ts.effFontSize()
-					flushRun := func() {
-						if len(run) == 0 {
-							return
+			case "TJ":
+				if inText {
+					if start := findArrayStart(tokens, i); start >= 0 {
+						var run []byte
+						kern := 0.0
+						effTextSize := ts.effFontSize()
+						sizeDev := effTextSize * math.Abs(ts.ctmA) * scale
+						csPx := ts.charSpacing * scale * math.Abs(ts.ctmA)
+						wsPx := ts.wordSpacing * scale * math.Abs(ts.ctmA)
+						flushRun := func() {
+							if len(run) == 0 {
+								return
+							}
+							penX := ts.ctmA*(ts.tmX+kern) + ts.ctmE
+							penY := pageH - (ts.ctmD*ts.tmY + ts.ctmF)
+							w := measureTextRunDev(ts.font, run, sizeDev, csPx, wsPx)
+							drawTextRun(img, ts.font, run, sizeDev, penX*scale, penY*scale, ts.fill, csPx, wsPx, ts)
+							// advance the text pen by the kern displacement plus
+							// the drawn width — without this, successive strings
+							// of one TJ array overlap
+							if ts.ctmA != 0 && scale != 0 {
+								ts.tmX += kern + w/(scale*ts.ctmA)
+							}
+							run = run[:0]
+							kern = 0
 						}
-						penX := ts.tmX + kern
-						penY := pageH - ts.tmY
-						drawTextRun(img, ts.font, run, effSize*scale, penX*scale, penY*scale, ts.fill, ts.charSpacing*scale, ts.wordSpacing*scale)
-						run = run[:0]
-					}
 					for _, item := range tokens[start+1 : i] {
 						if isStringToken(item) {
 							// strip the <...> or (...) delimiters
@@ -403,7 +431,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 							// flush before the displacement so the next string
 							// starts at the shifted position
 							flushRun()
-							kern += -v / 1000.0 * effSize
+							kern += -v / 1000.0 * effTextSize
 						}
 					}
 					flushRun()
@@ -421,6 +449,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				ctmF = me*0 + mf*ctmD + ctmF
 				ctmA *= ma
 				ctmD *= md
+				syncTextCTM()
 			}
 
 		case "re":
@@ -556,11 +585,21 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			}
 
 		case "q":
-			// Save graphics state
+			// Save graphics state (CTM + colors + line width)
+			gsStack = append(gsStack, graphicsState{
+				ctmA: ctmA, ctmD: ctmD, ctmE: ctmE, ctmF: ctmF,
+				fill: fillColor, stroke: strokeColor, lineWidth: lineWidth,
+			})
 		case "Q":
 			// Restore graphics state
-			ctmA, ctmD = 1, 1
-			ctmE, ctmF = 0, 0
+			if n := len(gsStack); n > 0 {
+				gs := gsStack[n-1]
+				gsStack = gsStack[:n-1]
+				ctmA, ctmD, ctmE, ctmF = gs.ctmA, gs.ctmD, gs.ctmE, gs.ctmF
+				fillColor, strokeColor = gs.fill, gs.stroke
+				lineWidth = gs.lineWidth
+				syncTextCTM()
+			}
 
 		case "W", "W*":
 			// Clipping — ignore for basic rendering
@@ -681,12 +720,26 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 		return
 	}
 	// Form XObjects may carry more text/graphics — render their stream
-	// recursively with the form's own font resources merged in.
+	// recursively with the form's own font resources merged in, composing
+	// the form's /Matrix (and nested forms' matrices) into the CTM so
+	// scaled/translated forms land at the right place and size.
 	if strings.Contains(obj.dict, "/Subtype /Form") || strings.Contains(obj.dict, "/Subtype/Form") {
 		if obj.stream != nil {
 			subPage := page
 			subPage.resources.fonts = pageFontsWithForm(parser, page.resources.fonts, obj.dict)
-			renderContentStream(img, obj.stream, parser, subPage, scale, pageH)
+			// device = CTM · /Matrix (a/d/e/f components)
+			fa, fd := 1.0, 1.0
+			fe, ff := 0.0, 0.0
+			if m := extractNumberArray(obj.dict, "/Matrix"); len(m) >= 6 {
+				fa, fd, fe, ff = m[0], m[3], m[4], m[5]
+			}
+			subCTM := [4]float64{
+				ctmA * fa,
+				ctmD * fd,
+				fe*ctmA + ctmE,
+				ff*ctmD + ctmF,
+			}
+			renderContentStream(img, obj.stream, parser, subPage, scale, pageH, &subCTM)
 		}
 		return
 	}
