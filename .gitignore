@@ -81,3 +81,6 @@ showcase_*.pdf
 test.pdf
 GoPDF2.test.exe
 suite_out.txt
+
+# scratch debug artifacts
+scratch/
