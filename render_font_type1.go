@@ -352,7 +352,7 @@ func (f *type1Font) glyphOutline(name string) ([][]glyphPt, float64) {
 	if !ok {
 		return nil, 0
 	}
-	p := &type1Interp{f: f}
+	p := &type1Interp{f: f, subrs: f.subrs}
 	p.run(cs, 0)
 	if len(p.cur) >= 3 {
 		p.contours = append(p.contours, p.cur)
@@ -382,6 +382,7 @@ func (f *type1Font) codeAdvance(code byte, name string) float64 {
 // (matching fontTools' T1OutlineExtractor).
 type type1Interp struct {
 	f        *type1Font
+	subrs    [][]byte
 	contours [][]glyphPt
 	cur      []glyphPt
 	x, y     float64
@@ -389,24 +390,30 @@ type type1Interp struct {
 	stack    []float64
 	flexing  bool
 	stems    int
+	ox, oy   float64 // origin offset (seac accent composition)
 }
 
 func (p *type1Interp) flushContour() {
 	if len(p.cur) >= 3 {
-		p.contours = append(p.contours, p.cur)
+		// copy: p.cur's backing array is reused for the next contour —
+		// appending the slice directly would alias it and every stored
+		// contour would be overwritten by the following path ops
+		c := make([]glyphPt, len(p.cur))
+		copy(c, p.cur)
+		p.contours = append(p.contours, c)
 	}
 	p.cur = p.cur[:0]
 }
 
 func (p *type1Interp) moveTo(px, py float64) {
 	p.flushContour()
-	p.cur = append(p.cur[:0], glyphPt{x: px, y: py, onCurve: true})
 	p.x, p.y = px, py
+	p.cur = append(p.cur[:0], glyphPt{x: px + p.ox, y: py + p.oy, onCurve: true})
 }
 
 func (p *type1Interp) lineTo(px, py float64) {
 	p.x, p.y = px, py
-	p.cur = append(p.cur, glyphPt{x: px, y: py, onCurve: true})
+	p.cur = append(p.cur, glyphPt{x: px + p.ox, y: py + p.oy, onCurve: true})
 }
 
 // curveTo flattens a cubic bezier into on-curve segments.
@@ -418,14 +425,16 @@ func (p *type1Interp) curveTo(x1, y1, x2, y2, x3, y3 float64) {
 		mt := 1 - tt
 		px := mt*mt*mt*x0 + 3*mt*mt*tt*x1 + 3*mt*tt*tt*x2 + tt*tt*tt*x3
 		py := mt*mt*mt*y0 + 3*mt*mt*tt*y1 + 3*mt*tt*tt*y2 + tt*tt*tt*y3
-		p.cur = append(p.cur, glyphPt{x: px, y: py, onCurve: true})
+		p.cur = append(p.cur, glyphPt{x: px + p.ox, y: py + p.oy, onCurve: true})
 	}
 	p.x, p.y = x3, y3
 }
 
-var type1Trace bool
-
 // run executes one charstring (or subr) against the shared state.
+// Raw byte dispatch: values below 32 are operators, 12 opens an escape
+// pair whose second byte selects the sub-operator. The escape cases
+// (12 0, 12 16, …) must never collide with raw operators — hsbw is raw
+// 13 while 12 1 is vstem3, so the two switches are separate.
 func (p *type1Interp) run(cs []byte, depth int) {
 	if depth > 32 {
 		return
@@ -440,63 +449,126 @@ func (p *type1Interp) run(cs []byte, depth int) {
 			p.stack = append(p.stack, float64(v))
 			continue
 		}
-		args := p.stack
-		p.stack = p.stack[:0]
-		if type1Trace {
-			fmt.Printf("T1 op=%d args=%v pts=%d", v, args, len(p.cur))
+		if v == 12 {
+			// escape pair: the next byte selects the sub-operator
+			if i >= len(cs) {
+				break
+			}
+			sub := int(cs[i])
+			i++
+			switch sub {
+			case 0: // dotsection — no-op
+			case 1, 2: // vstem3 / hstem3: 6 args = 3 stems
+				p.stems += len(p.stack) / 2
+				p.stack = p.stack[:0]
+			case 6: // seac: asb adx ady bchar achar
+				if len(p.stack) >= 5 {
+					a := p.stack[len(p.stack)-5:]
+					asb, adx, ady := a[0], a[1], a[2]
+					bchar, achar := int(a[3]), int(a[4])
+					p.stack = p.stack[:0]
+					p.composeSeac(asb, adx, ady, bchar, achar, depth)
+				} else {
+					p.stack = p.stack[:0]
+				}
+				return
+			case 7: // sbw: wx sbx wy wxy — width lives in the /Widths array
+				p.stack = p.stack[:0]
+			case 9: // closepath (escape form)
+				p.flushContour()
+			case 12: // div: num den div → num/den
+				if len(p.stack) >= 2 {
+					den := p.stack[len(p.stack)-1]
+					num := p.stack[len(p.stack)-2]
+					p.stack = p.stack[:len(p.stack)-2]
+					if den != 0 {
+						p.stack = append(p.stack, num/den)
+					}
+				}
+			case 16: // callothersubr: [args… nArgs subr#] — URW flex uses
+				// othersubr #0/#1/#2; the arg stack stays available for
+				// doFlex, which pops its own 16 values.
+				if len(p.stack) >= 2 {
+					subrNum := int(p.stack[len(p.stack)-1])
+					nArgs := int(p.stack[len(p.stack)-2])
+					rest := p.stack[:len(p.stack)-2]
+					p.stack = rest
+					switch {
+					case subrNum == 0 && nArgs == 3:
+						p.doFlex()
+					case subrNum == 1 && nArgs == 0:
+						p.flexing = true
+					case subrNum == 2:
+						p.flexing = false
+					}
+				}
+			case 17: // pop — no-op
+			case 33: // setcurrentpoint
+				if len(p.stack) >= 2 {
+					p.x, p.y = p.stack[len(p.stack)-2], p.stack[len(p.stack)-1]
+					p.stack = p.stack[:0]
+				}
+			default:
+				p.stack = p.stack[:0]
+			}
+			continue
 		}
 		switch v {
 		case 13: // hsbw: sbx wx (sbx pushed first — fontTools popall order)
-			if len(args) >= 2 {
-				p.width = args[len(args)-1]
-				p.moveTo(args[len(args)-2], 0)
-			} else if len(args) == 1 {
-				p.width = args[0]
+			if len(p.stack) >= 2 {
+				p.width = p.stack[len(p.stack)-1]
+				p.moveTo(p.stack[len(p.stack)-2], 0)
+			} else if len(p.stack) == 1 {
+				p.width = p.stack[0]
 			}
+			p.stack = p.stack[:0]
 		case 14: // endchar
 			if len(p.cur) >= 3 {
 				p.contours = append(p.contours, p.cur)
 			}
 			p.cur = p.cur[:0]
-			if p.width == 0 && len(args) >= 1 {
-				p.width = args[len(args)-1]
+			if p.width == 0 && len(p.stack) >= 1 {
+				p.width = p.stack[len(p.stack)-1]
 			}
+			p.stack = p.stack[:0]
 			return
 		case 21: // rmoveto: dx dy (odd → first value is a residual)
 			if p.flexing {
 				continue
 			}
 			switch {
-			case len(args) >= 2:
-				p.moveTo(p.x+args[len(args)-2], p.y+args[len(args)-1])
-			case len(args) == 1:
-				p.moveTo(p.x+args[0], p.y)
+			case len(p.stack) >= 2:
+				p.moveTo(p.x+p.stack[len(p.stack)-2], p.y+p.stack[len(p.stack)-1])
+			case len(p.stack) == 1:
+				p.moveTo(p.x+p.stack[0], p.y)
 			}
+			p.stack = p.stack[:0]
 		case 22: // hmoveto
 			if p.flexing {
+				p.stack = p.stack[:0]
 				continue
 			}
-			if len(args) >= 1 {
-				p.moveTo(p.x+args[len(args)-1], p.y)
+			if len(p.stack) >= 1 {
+				p.moveTo(p.x+p.stack[len(p.stack)-1], p.y)
 			}
+			p.stack = p.stack[:0]
 		case 4: // vmoveto
 			if p.flexing {
+				p.stack = p.stack[:0]
 				continue
 			}
-			if len(args) >= 1 {
-				p.moveTo(p.x, p.y+args[len(args)-1])
+			if len(p.stack) >= 1 {
+				p.moveTo(p.x, p.y+p.stack[len(p.stack)-1])
 			}
-		case 33: // setcurrentpoint
-			if len(args) >= 2 {
-				p.x, p.y = args[len(args)-2], args[len(args)-1]
-			}
+			p.stack = p.stack[:0]
 		case 5: // rlineto: pairs of dx dy
-			for k := 0; k+1 < len(args); k += 2 {
-				p.lineTo(p.x+args[k], p.y+args[k+1])
+			for k := 0; k+1 < len(p.stack); k += 2 {
+				p.lineTo(p.x+p.stack[k], p.y+p.stack[k+1])
 			}
+			p.stack = p.stack[:0]
 		case 6: // hlineto (alternating h/v when given several)
 			vert := false
-			for _, d := range args {
+			for _, d := range p.stack {
 				if vert {
 					p.lineTo(p.x, p.y+d)
 				} else {
@@ -504,9 +576,10 @@ func (p *type1Interp) run(cs []byte, depth int) {
 				}
 				vert = !vert
 			}
+			p.stack = p.stack[:0]
 		case 7: // vlineto
 			vert := true
-			for _, d := range args {
+			for _, d := range p.stack {
 				if vert {
 					p.lineTo(p.x, p.y+d)
 				} else {
@@ -514,58 +587,70 @@ func (p *type1Interp) run(cs []byte, depth int) {
 				}
 				vert = !vert
 			}
+			p.stack = p.stack[:0]
 		case 8: // rrcurveto: 3 pairs of control/end deltas
-			if len(args) >= 6 {
-				a := args[len(args)-6:]
+			if len(p.stack) >= 6 {
+				a := p.stack[len(p.stack)-6:]
 				p.curveTo(p.x+a[0], p.y+a[1], p.x+a[0]+a[2], p.y+a[1]+a[3], p.x+a[0]+a[2]+a[4], p.y+a[1]+a[3]+a[5])
 			}
+			p.stack = p.stack[:0]
 		case 30: // vhcurveto
-			p.flexCurve(args, true)
+			p.flexCurve(p.stack, true)
+			p.stack = p.stack[:0]
 		case 31: // hvcurveto
-			p.flexCurve(args, false)
+			p.flexCurve(p.stack, false)
+			p.stack = p.stack[:0]
 		case 9: // closepath
 			p.flushContour()
-		case 2:
-			p.flushContour()
-		case 1, 3, 18, 23: // hstem / vstem / stem counts
-			p.stems += len(args) / 2
-		case 12 + 0: // dotsection — no-op
-		case 12 + 12: // div: num den div → push quotient
-			if len(args) >= 2 {
-				den := args[len(args)-1]
-				if den != 0 {
-					p.stack = append(p.stack, args[len(args)-2]/den)
-				}
-			}
+			p.stack = p.stack[:0]
+		case 1, 3, 18, 23: // hstem / vstem / hstem3 / vstem3 (2 args per stem)
+			p.stems += len(p.stack) / 2
+			p.stack = p.stack[:0]
+		case 19, 20: // hintmask / cntrmask: stem args + (stems+7)/8 mask bytes
+			p.stems += len(p.stack) / 2
+			p.stack = p.stack[:0]
+			i += (p.stems + 7) / 8
 		case 10: // callsubr
-			if len(args) >= 1 && p.f != nil {
-				idx := int(args[len(args)-1])
+			if len(p.stack) >= 1 && p.f != nil {
+				idx := int(p.stack[len(p.stack)-1])
+				p.stack = p.stack[:len(p.stack)-1]
 				if idx >= 0 && idx < len(p.f.subrs) {
 					p.run(p.f.subrs[idx], depth+1)
 				}
+			} else {
+				p.stack = p.stack[:0]
 			}
 		case 11: // return
 			return
-		case 12 + 7: // sbw: wx sbx wy wxy
-			if len(args) >= 4 {
-				p.width = args[len(args)-4]
-			}
-		case 12 + 16: // callothersubr: args… nArgs subrIndex
-			if len(args) >= 2 {
-				subrIndex := int(args[len(args)-1])
-				nArgs := int(args[len(args)-2])
-				switch {
-				case subrIndex == 0 && nArgs == 3:
-					p.doFlex()
-				case subrIndex == 1:
-					p.flexing = true
-				case subrIndex == 2:
-					p.flexing = false
-				}
-			}
-		case 12 + 17: // pop — no-op
 		default:
-			// unknown op: drop args
+			// unknown raw operator: drop args
+			p.stack = p.stack[:0]
+		}
+	}
+}
+
+// composeSeac draws the base glyph at the origin and the accent glyph
+// offset by (adx−asb, ady) — the accent-composition form of seac.
+func (p *type1Interp) composeSeac(asb, adx, ady float64, bchar, achar int, depth int) {
+	baseName := standardType1Names[byte(bchar)]
+	accentName := standardType1Names[byte(achar)]
+	if baseName != "" {
+		if cs, ok := p.f.glyphs[baseName]; ok {
+			sub := &type1Interp{f: p.f, subrs: p.subrs}
+			sub.run(cs, depth+1)
+			for _, c := range sub.contours {
+				p.contours = append(p.contours, c)
+			}
+		}
+	}
+	if accentName != "" {
+		if cs, ok := p.f.glyphs[accentName]; ok {
+			sub := &type1Interp{f: p.f, subrs: p.subrs}
+			sub.ox, sub.oy = adx-asb, ady
+			sub.run(cs, depth+1)
+			for _, c := range sub.contours {
+				p.contours = append(p.contours, c)
+			}
 		}
 	}
 }

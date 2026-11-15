@@ -19,10 +19,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rendering pipeline honored degenerate stream filters and /Length cuts
   (see 2.1.0) for images as well
 
+### Fixed
+- **Contour slice aliasing** — every previously stored glyph contour was
+  overwritten by the following path ops (classic Go slice reuse), turning
+  glyphs into overlapping scribbles; contours are now copied on append
+- **Escape operator dispatch** — raw byte 12 opens an escape pair; the
+  sub-operator bytes (callothersubr, pop, div, setcurrentpoint, seac,
+  sbw) are dispatched from a separate switch, fixing collisions with raw
+  operators 13/18/19/24/28/29
+- **/Length prefix matching** — /Length1 (PFB segment size) no longer
+  truncates /Length streams (GNU gawk's font was cut to 1 byte)
+- callothersubr/pop now leave the operand stack available for the
+  following callsubr (URW's `146 1 3 12 16 12 17 10` idiom runs subr 146)
+
 ### Known limitations
-- Intra-run glyph advances on some Type 1 documents remain tighter than
-  the glyph ink; multi-line layout, word spacing and page structure are
-  correct
+- Complex vector figures with deeply nested even-odd rect fills
+  (arXiv Figure 1) render darker than the original
 - Text with 90°-rotated writing (pdf.js bug1057544) renders blank; the
   per-glyph direction model does not support vertical text yet
 

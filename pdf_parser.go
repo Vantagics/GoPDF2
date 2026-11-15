@@ -230,11 +230,28 @@ func (p *rawPDFParser) parseObjects() {
 // streamLengthDirect reads /Length as a DIRECT integer (not an indirect
 // "N 0 R" reference). ok is false when /Length is absent or indirect.
 func streamLengthDirect(dict string) (int64, bool) {
-	idx := strings.Index(dict, "/Length")
-	if idx < 0 {
-		return 0, false
+	for idx := 0; ; {
+		i := strings.Index(dict[idx:], "/Length")
+		if i < 0 {
+			return 0, false
+		}
+		idx += i
+		// exact key: /Length must not prefix a longer name (/Length1)
+		end := idx + len("/Length")
+		if end < len(dict) {
+			c := dict[end]
+			if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {
+				idx = end
+				continue
+			}
+		}
+		return streamLengthDirectAt(dict[end:], dict)
 	}
-	rest := dict[idx+len("/Length"):]
+}
+
+// streamLengthDirectAt parses a direct integer at the start of rest (which
+// follows an exact "/Length" key).
+func streamLengthDirectAt(rest, dict string) (int64, bool) {
 	// skip whitespace
 	i := 0
 	for i < len(rest) && isPDFSpace(rest[i]) {
