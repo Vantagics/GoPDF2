@@ -118,7 +118,7 @@ func renderParsedPage(parser *rawPDFParser, pageIndex int, opt RenderOption) (im
 
 	stream := parser.getPageContentStream(pageIndex)
 	if len(stream) > 0 {
-		renderContentStream(img, stream, parser, page, scale, pageH, nil)
+		renderContentStream(img, stream, parser, page, scale, pageH, nil, nil)
 	}
 
 	// /CropBox: the visible area — crop the composed page to it (user
@@ -274,7 +274,7 @@ func max2(a, b float64) float64 {
 }
 
 // renderContentStream interprets a PDF content stream and draws onto the image.
-func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, page rawPDFPage, scale, pageH float64, ctmIn *[4]float64) {
+func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, page rawPDFPage, scale, pageH float64, ctmIn *[4]float64, clipIn *[4]int) {
 	tokens := tokenizeBytes(stream)
 
 	var stack []float64
@@ -285,10 +285,13 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 	// content inside form XObjects inherits the form's transform.
 	ctmA, ctmD := 1.0, 1.0
 	ctmE, ctmF := 0.0, 0.0
+	// axis-aligned device-space clip rect (x0, y0, x1, y1); nil = unclipped
+	var clip *[4]int
 	if ctmIn != nil {
 		ctmA, ctmD = (*ctmIn)[0], (*ctmIn)[1]
 		ctmE, ctmF = (*ctmIn)[2], (*ctmIn)[3]
 	}
+	clip = clipIn
 
 	// graphics state stack for q/Q (CTM + colors + line width + clip)
 	type graphicsState struct {
@@ -298,8 +301,6 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 		clip                   *[4]int
 	}
 	var gsStack []graphicsState
-	// axis-aligned device-space clip rect (x0, y0, x1, y1); nil = unclipped
-	var clip *[4]int
 	clipPending := false
 
 	// path construction: subpaths in PDF space (y-up), painted by S/f/B
@@ -603,7 +604,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			// Draw XObject (image)
 			if i >= 1 && strings.HasPrefix(string(tokens[i-1]), "/") {
 				name := string(tokens[i-1])
-				renderXObject(img, parser, page, name, ctmA, ctmD, ctmE, ctmF, scale, pageH)
+				renderXObject(img, parser, page, name, ctmA, ctmD, ctmE, ctmF, scale, pageH, clip)
 			}
 
 		case "S", "s", "f", "F", "f*", "B", "B*", "b", "b*":
@@ -876,7 +877,7 @@ func drawRectOnImage(img *image.RGBA, x, y, w, h, scale float64, c color.RGBA) {
 
 // renderXObject renders an image XObject onto the target image.
 func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name string,
-	ctmA, ctmD, ctmE, ctmF, scale, pageH float64) {
+	ctmA, ctmD, ctmE, ctmF, scale, pageH float64, clip *[4]int) {
 
 	objNum, ok := page.resources.xobjs[name]
 	if !ok {
@@ -906,7 +907,32 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 				fe*ctmA + ctmE,
 				ff*ctmD + ctmF,
 			}
-			renderContentStream(img, obj.stream, parser, subPage, scale, pageH, &subCTM)
+			// the form BBox clips the form content: intersect the placed
+			// BBox rect with the current clip
+			var bboxClip *[4]int
+			if bb := extractNumberArray(obj.dict, "/BBox"); len(bb) >= 4 {
+				bx0 := int(min2(ctmA*bb[0]+ctmE, ctmA*bb[2]+ctmE) * scale)
+				by0 := int((pageH - max2(ctmD*bb[1]+ctmF, ctmD*bb[3]+ctmF)) * scale)
+				bx1 := int(max2(ctmA*bb[0]+ctmE, ctmA*bb[2]+ctmE) * scale)
+				by1 := int((pageH - min2(ctmD*bb[1]+ctmF, ctmD*bb[3]+ctmF)) * scale)
+				c := [4]int{bx0, by0, bx1, by1}
+				bboxClip = &c
+				if clip != nil {
+					if bboxClip[0] < clip[0] {
+						bboxClip[0] = clip[0]
+					}
+					if bboxClip[1] < clip[1] {
+						bboxClip[1] = clip[1]
+					}
+					if bboxClip[2] > clip[2] {
+						bboxClip[2] = clip[2]
+					}
+					if bboxClip[3] > clip[3] {
+						bboxClip[3] = clip[3]
+					}
+				}
+			}
+			renderContentStream(img, obj.stream, parser, subPage, scale, pageH, &subCTM, bboxClip)
 		}
 		return
 	}
