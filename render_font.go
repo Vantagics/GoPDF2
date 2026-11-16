@@ -29,7 +29,9 @@ var errMinTTF = errors.New("not a supported TrueType font")
 
 // parseMinTTF parses raw TrueType data. cmap and hmtx are optional.
 func parseMinTTF(data []byte) (*minTTF, error) {
-	if len(data) < 12 || data[0] != 0 || data[1] != 1 || data[2] != 0 || data[3] != 0 {
+	// sfnt version: 0x00010000, Apple "true", or "ttcf" collection header
+	if len(data) < 12 || !(data[0] == 0 && data[1] == 1 && data[2] == 0 && data[3] == 0) &&
+		!(data[0] == 't' && data[1] == 'r' && data[2] == 'u' && data[3] == 'e') {
 		return nil, errMinTTF
 	}
 	numTables := int(binary.BigEndian.Uint16(data[4:6]))
