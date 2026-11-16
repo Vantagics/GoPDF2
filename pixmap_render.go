@@ -302,8 +302,11 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 	var clip *[4]int
 	clipPending := false
 
-	// path construction (m/l) in device pixels, stroked by S/s
-	var pathPts [][2]float64
+	// path construction: subpaths in PDF space (y-up), painted by S/f/B
+	var curPath [][2]float64
+	var subpaths [][][2]float64
+	curX, curY := 0.0, 0.0 // current point in user space
+	subX, subY := 0.0, 0.0 // subpath start (for h closepath)
 	lineWidth := 1.0
 
 	// text state
@@ -460,7 +463,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			}
 
 		case "re":
-			// Rectangle: x y w h re — transformed through the CTM, painted
+			// Rectangle: x y w h re — contributes a closed subpath; painted
 			// according to the following op (f fills, S strokes)
 			if len(stack) >= 4 {
 				rx := stack[len(stack)-4]
@@ -497,7 +500,12 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				x := stack[len(stack)-2]
 				y := stack[len(stack)-1]
 				stack = stack[:len(stack)-2]
-				pathPts = append(pathPts, [2]float64{ctmA*x + ctmE, ctmD*y + ctmF})
+				if len(curPath) > 0 {
+					subpaths = append(subpaths, curPath)
+				}
+				curX, curY = x, y
+				subX, subY = x, y
+				curPath = append(curPath[:0], [2]float64{ctmA*x + ctmE, ctmD*y + ctmF})
 			}
 
 		case "l":
@@ -506,8 +514,36 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				x := stack[len(stack)-2]
 				y := stack[len(stack)-1]
 				stack = stack[:len(stack)-2]
-				pathPts = append(pathPts, [2]float64{ctmA*x + ctmE, ctmD*y + ctmF})
+				curX, curY = x, y
+				curPath = append(curPath, [2]float64{ctmA*x + ctmE, ctmD*y + ctmF})
 			}
+
+		case "c":
+			// curveto: x1 y1 x2 y2 x3 y3 — cubic bezier flattened into
+			// segments through the CTM
+			if len(stack) >= 6 {
+				a := stack[len(stack)-6:]
+				stack = stack[:len(stack)-6]
+				x1u, y1u := curX+a[0], curY+a[1]
+				x2u, y2u := x1u+a[2], y1u+a[3]
+				x3u, y3u := x2u+a[4], y2u+a[5]
+				const steps = 8
+				for t := 1; t <= steps; t++ {
+					tt := float64(t) / steps
+					mt := 1 - tt
+					px := mt*mt*mt*curX + 3*mt*mt*tt*x1u + 3*mt*tt*tt*x2u + tt*tt*tt*x3u
+					py := mt*mt*mt*curY + 3*mt*mt*tt*y1u + 3*mt*tt*tt*y2u + tt*tt*tt*y3u
+					curPath = append(curPath, [2]float64{ctmA*px + ctmE, ctmD*py + ctmF})
+				}
+				curX, curY = x3u, y3u
+			}
+
+		case "h":
+			// closepath: line back to the subpath start
+			if len(curPath) > 0 {
+				curPath = append(curPath, [2]float64{ctmA*subX + ctmE, ctmD*subY + ctmF})
+			}
+			curX, curY = subX, subY
 
 		case "RG":
 			// Set stroke color RGB
@@ -570,51 +606,83 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				renderXObject(img, parser, page, name, ctmA, ctmD, ctmE, ctmF, scale, pageH)
 			}
 
-		case "S", "s":
-			// Stroke the constructed path (lines/polylines). Points are in
-			// PDF space (y-up): convert to device pixels (y-down).
-			if len(pathPts) >= 2 {
-				dev := make([][2]float64, len(pathPts))
-				for i, p := range pathPts {
-					dev[i] = [2]float64{p[0] * scale, (pageH - p[1]) * scale}
-				}
-				if debugRender {
-					fmt.Printf("DBG stroke n=%d pts=%v w=%.1f\n", len(dev), dev, lineWidth*scale)
-				}
-				strokePolyline(img, dev, lineWidth*scale, strokeColor, clip)
+		case "S", "s", "f", "F", "f*", "B", "B*", "b", "b*":
+			// Paint the constructed subpaths: stroke (S/s), fill (f/F/f*)
+			// or both (B/b). Points are in PDF space (y-up): convert to
+			// device pixels (y-down).
+			if (tok == "s" || tok == "b") && len(curPath) > 0 {
+				// close the last subpath before stroking/filling
+				curPath = append(curPath, [2]float64{ctmA*subX + ctmE, ctmD*subY + ctmF})
 			}
-			pathPts = pathPts[:0]
-			stack = stack[:0]
-
-		case "f", "F", "f*":
-			// Fill path
-			pathPts = pathPts[:0]
-			stack = stack[:0]
-
-		case "B", "B*", "b", "b*":
-			// Fill and stroke
+			if len(curPath) > 0 {
+				subpaths = append(subpaths, curPath)
+				curPath = curPath[:0]
+			}
+			filling := tok == "f" || tok == "F" || tok == "f*" || tok == "B" || tok == "b"
+			stroking := tok == "S" || tok == "s" || tok == "B" || tok == "b"
+			if len(subpaths) > 0 {
+				var devPolys [][][2]float64
+				for _, sp := range subpaths {
+					dev := make([][2]float64, len(sp))
+					for k, p := range sp {
+						dev[k] = [2]float64{p[0] * scale, (pageH - p[1]) * scale}
+					}
+					devPolys = append(devPolys, dev)
+				}
+				if filling {
+					var polys [][]image.Point
+					for _, dev := range devPolys {
+						poly := make([]image.Point, len(dev))
+						for k, p := range dev {
+							poly[k] = image.Point{X: int(p[0]), Y: int(p[1])}
+						}
+						polys = append(polys, poly)
+					}
+					fillPolygonEvenOdd(img, polys, fillColor, clip)
+				}
+				if stroking {
+					// the line width scales with the CTM (form XObjects with
+					// mm-scale coordinate systems declare huge raw widths)
+					strokeW := lineWidth * scale * math.Abs(ctmA)
+					if strokeW > 100 {
+						strokeW = 100
+					}
+					for _, dev := range devPolys {
+						if len(dev) >= 2 {
+							strokePolyline(img, dev, strokeW, strokeColor, clip)
+						}
+					}
+				}
+			}
+			subpaths = subpaths[:0]
 			stack = stack[:0]
 
 		case "n":
 			// End path without fill/stroke; apply a pending clip
 			if clipPending {
 				clipPending = false
-				if len(pathPts) >= 2 {
+				if len(curPath) > 0 {
+					subpaths = append(subpaths, curPath)
+					curPath = curPath[:0]
+				}
+				if len(subpaths) >= 1 {
 					minX, minY, maxX, maxY := 1<<30, 1<<30, -(1<<30), -(1<<30)
-					for _, pt := range pathPts {
-						px := int(pt[0] * scale)
-						py := int((pageH - pt[1]) * scale)
-						if px < minX {
-							minX = px
-						}
-						if px > maxX {
-							maxX = px
-						}
-						if py < minY {
-							minY = py
-						}
-						if py > maxY {
-							maxY = py
+					for _, sp := range subpaths {
+						for _, pt := range sp {
+							px := int(pt[0] * scale)
+							py := int((pageH - pt[1]) * scale)
+							if px < minX {
+								minX = px
+							}
+							if px > maxX {
+								maxX = px
+							}
+							if py < minY {
+								minY = py
+							}
+							if py > maxY {
+								maxY = py
+							}
 						}
 					}
 					c := [4]int{minX, minY, maxX, maxY}
@@ -624,7 +692,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				}
 				syncTextCTM()
 			}
-			pathPts = pathPts[:0]
+			subpaths = subpaths[:0]
 			stack = stack[:0]
 
 		case "w":
@@ -686,6 +754,8 @@ func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA
 	}
 }
 
+var drawThickLineWarned bool
+
 // drawThickLine rasterizes one segment with integer thickness.
 func drawThickLine(img *image.RGBA, x0, y0, x1, y1 float64, thick int, c color.RGBA, bounds image.Rectangle, clip *[4]int) {
 	dx := x1 - x0
@@ -696,6 +766,16 @@ func drawThickLine(img *image.RGBA, x0, y0, x1, y1 float64, thick int, c color.R
 	}
 	if steps < 1 {
 		steps = 1
+	}
+	if steps > 100000 {
+		if !drawThickLineWarned {
+			drawThickLineWarned = true
+			fmt.Println("DBG drawThickLine steps:", steps, "from", x0, y0, "to", x1, y1)
+		}
+		steps = 100000
+	}
+	if thick > 100 {
+		thick = 100
 	}
 	half := thick / 2
 	for i := 0; i <= steps; i++ {
