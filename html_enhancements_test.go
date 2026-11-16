@@ -182,3 +182,57 @@ func TestHTML_HRCSS(t *testing.T) {
 		t.Errorf("hr broke surrounding text: %q", text)
 	}
 }
+
+// --- batch 2: opacity, list-style-position, rounded bg, image valign ---
+
+func TestHTML_Opacity(t *testing.T) {
+	pages := renderHTMLToLines(t, `<p style="opacity:0.4">faded text content</p><p>solid text</p>`)
+	text := htmlPagesText(pages)
+	if !strings.Contains(text, "faded text content") {
+		t.Errorf("opacity text missing: %q", text)
+	}
+	if !strings.Contains(text, "solid text") {
+		t.Errorf("solid text missing: %q", text)
+	}
+}
+
+func TestHTML_ListStylePositionInside(t *testing.T) {
+	pages := renderHTMLToLines(t, `<ul style="list-style-position:inside"><li>first item text</li><li>second item</li></ul>`)
+	text := htmlPagesText(pages)
+	if !strings.Contains(text, "first item text") {
+		t.Errorf("inside list content missing: %q", text)
+	}
+	// inside markers are part of the line: the line should contain the
+	// bullet (•) right before the item text
+	foundInline := false
+	for _, pg := range pages {
+		for _, ln := range pg {
+			if strings.Contains(ln, "•") && strings.Contains(ln, "first item") {
+				foundInline = true
+			}
+		}
+	}
+	if !foundInline {
+		t.Errorf("inside marker not inline with the item text: %q", text)
+	}
+}
+
+func TestHTML_RoundedBackground(t *testing.T) {
+	pages := renderHTMLToLines(t, `<div style="background-color:#eaf4ff; border-radius:12px; padding:8px">rounded callout body text</div>`)
+	text := htmlPagesText(pages)
+	if !strings.Contains(text, "rounded callout body text") {
+		t.Errorf("rounded bg content missing: %q", text)
+	}
+}
+
+func TestHTML_InlineImageVerticalAlign(t *testing.T) {
+	img := "test/res/gopher01.jpg"
+	if _, err := os.Stat(img); err != nil {
+		t.Skip("test image not available")
+	}
+	pages := renderHTMLToLines(t, `<p>text with <img src="`+img+`" style="width:24px; vertical-align:middle"> inline image</p>`)
+	text := htmlPagesText(pages)
+	if !strings.Contains(text, "text with") || !strings.Contains(text, "inline image") {
+		t.Errorf("inline image text missing: %q", text)
+	}
+}

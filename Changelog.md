@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rendering pipeline honored degenerate stream filters and /Length cuts
   (see 2.1.0) for images as well
 
+### Added
+- **html2pdf batch 2**: CSS `opacity` (text transparency via ExtGState,
+  including in the pixmap renderer via /ca-driven alpha), CSS
+  `width`/`height` on images (previously attribute-only),
+  `list-style-position: inside`, rounded block backgrounds
+  (`border-radius`), inline-image `vertical-align: middle`, `<hr>`
+  color parsing from full `border-top` shorthands
+- **Apple 'true' sfnt version** accepted by parseMinTTF (vertical-writing
+  fixture bug1057544 text now rasterizes)
+
 ### Fixed
 - **Contour slice aliasing** — every previously stored glyph contour was
   overwritten by the following path ops (classic Go slice reuse), turning

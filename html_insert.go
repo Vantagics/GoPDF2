@@ -73,6 +73,9 @@ type htmlRenderState struct {
 
 	bgR, bgG, bgB uint8
 	hasBg         bool
+	alpha         float64 // text opacity (0 = opaque; CSS opacity)
+	radius        float64 // border-radius on block backgrounds (units)
+	listPosInside bool    // list-style-position: inside
 
 	align      int // Left / Center / Right / Justify
 	strike     bool
@@ -545,6 +548,19 @@ func (r *htmlRenderer) applyCSSProps(css map[string]string, state htmlRenderStat
 			state.bgR, state.bgG, state.bgB = cr, cg, cb
 			state.hasBg = true
 		}
+	}
+	if op, ok := css["opacity"]; ok {
+		if v, err := strconv.ParseFloat(strings.TrimSpace(op), 64); err == nil && v >= 0 && v < 1 {
+			state.alpha = 1 - v // CSS opacity fades; renderer alpha = opacity
+		}
+	}
+	if br, ok := css["border-radius"]; ok {
+		if v, ok2 := parseDimension(br, state.fontSize); ok2 && v > 0 {
+			state.radius = v / r.unitConversion()
+		}
+	}
+	if lsp, ok := css["list-style-position"]; ok {
+		state.listPosInside = strings.TrimSpace(lsp) == "inside"
 	}
 	if pbi, ok := css["page-break-inside"]; ok && strings.TrimSpace(pbi) == "avoid" {
 		state.pageBreakAvoid = true
@@ -1525,7 +1541,13 @@ func (r *htmlRenderer) renderTextLines(lines [][]textFragment, state htmlRenderS
 				ow += state.padRight
 			}
 			r.gp.SetFillColor(state.bgR, state.bgG, state.bgB)
-			r.gp.RectFromUpperLeftWithStyle(ox, r.cursorY, ow, lh, "F")
+			if state.radius > 0 {
+				// rounded band: Rectangle draws top-down (y1 > y0), radius
+				// applies to every corner
+				_ = r.gp.Rectangle(ox, r.cursorY, ox+ow, r.cursorY+lh, "F", state.radius, 8)
+			} else {
+				r.gp.RectFromUpperLeftWithStyle(ox, r.cursorY, ow, lh, "F")
+			}
 		}
 		// block borders: left/right as vertical segments per line band (the
 		// contiguous segments form continuous rules); top on the first
@@ -1603,7 +1625,7 @@ func (r *htmlRenderer) renderTextLines(lines [][]textFragment, state htmlRenderS
 				// boundaries exactly (no gap heuristics needed).
 				if err := r.applyFont(f.state); err == nil {
 					r.gp.SetXY(r.cursorX, r.cursorY)
-					_ = r.gp.CellWithOption(&Rect{W: w, H: lh}, " ", CellOption{Align: Left | Top})
+					_ = r.gp.CellWithOption(&Rect{W: w, H: lh}, " ", CellOption{Align: Left | Top, Transparency: textTransparencyOpt(&state)})
 				}
 				r.cursorX += w + extraSpace
 			case fragImage:
@@ -1638,6 +1660,19 @@ func lineMaxState(line []textFragment) htmlRenderState {
 	return best
 }
 
+// textTransparencyOpt returns a pointer to a Transparency value when the
+// state carries an opacity below 1 (CSS opacity); nil otherwise.
+func textTransparencyOpt(state *htmlRenderState) *Transparency {
+	if state == nil || state.alpha <= 0 || state.alpha >= 1 {
+		return nil
+	}
+	t, err := NewTransparency(state.alpha, "")
+	if err != nil {
+		return nil
+	}
+	return &t
+}
+
 // renderFragmentText draws one text fragment at the cursor with decorations.
 func (r *htmlRenderer) renderFragmentText(f *textFragment, lh, extraSpace float64) error {
 	if err := r.applyFont(f.state); err != nil {
@@ -1658,7 +1693,8 @@ func (r *htmlRenderer) renderFragmentText(f *textFragment, lh, extraSpace float6
 
 	r.gp.SetXY(r.cursorX, r.cursorY)
 	rect := &Rect{W: w, H: lh}
-	if err := r.gp.CellWithOption(rect, f.text, CellOption{Align: Left | Top}); err != nil {
+	trOpt := textTransparencyOpt(&f.state)
+	if err := r.gp.CellWithOption(rect, f.text, CellOption{Align: Left | Top, Transparency: trOpt}); err != nil {
 		return err
 	}
 
@@ -1736,6 +1772,20 @@ func (r *htmlRenderer) newImageFragment(node *htmlNode, state htmlRenderState) *
 			imgH = v / r.unitConversion()
 		}
 	}
+	// CSS width/height on the image override the attributes
+	if css, ok := node.Attrs["style"]; ok {
+		styles := parseInlineStyle(css)
+		if w, ok := styles["width"]; ok {
+			if v, vok := parseDimension(w, r.boxW); vok && v > 0 {
+				imgW = v / r.unitConversion()
+			}
+		}
+		if h, ok := styles["height"]; ok {
+			if v, vok := parseDimension(h, r.boxH); vok && v > 0 {
+				imgH = v / r.unitConversion()
+			}
+		}
+	}
 	aspect := 1.0
 	if ih > 0 {
 		aspect = iw / ih
@@ -1797,7 +1847,14 @@ func (r *htmlRenderer) drawImageFragment(f *textFragment) error {
 			return nil
 		}
 	}
-	if err := r.gp.ImageByHolder(f.img.holder, r.cursorX, r.cursorY, &Rect{W: f.img.w, H: f.img.h}); err != nil {
+	imgY := r.cursorY
+	if f.state.vAlign == Middle {
+		lh := r.lineHeightOf(f.state)
+		if off := (lh - f.img.h) / 2; off > 0 {
+			imgY += off
+		}
+	}
+	if err := r.gp.ImageByHolder(f.img.holder, r.cursorX, imgY, &Rect{W: f.img.w, H: f.img.h}); err != nil {
 		return err
 	}
 	r.cursorX += f.img.w
@@ -1887,11 +1944,10 @@ func (r *htmlRenderer) renderHR(node *htmlNode, state htmlRenderState) error {
 		}
 		// border-top: <width> <style> <color> — thickness + color win
 		if bt, ok2 := styles["border-top"]; ok2 && strings.TrimSpace(bt) != "" && bt != "none" {
-			fields := strings.Fields(bt)
-			for _, f := range fields {
+			for _, f := range strings.Fields(bt) {
 				if v, ok3 := parseDimension(f, state.fontSize); ok3 && v > 0 {
 					width = v / r.unitConversion()
-					break
+					continue
 				}
 				if cr, cg, cb, ok3 := parseCSSColor(f); ok3 {
 					strokeR, strokeG, strokeB = cr, cg, cb
@@ -1987,6 +2043,10 @@ func (r *htmlRenderer) renderList(node *htmlNode, state htmlRenderState, ordered
 		}
 	}
 	leftPad, markerCol, contentIndent := listMarkerLayout(state.fontSize, r.unitConversion(), r.boxW, maxMarkerW)
+	if state.listPosInside {
+		// inside: the marker is part of the first line — no hanging indent
+		leftPad, markerCol, contentIndent = 0, 0, 0
+	}
 	// nested lists indent further
 	if depth > 0 {
 		baseIndent := state.fontSize * 1.0 * float64(depth)

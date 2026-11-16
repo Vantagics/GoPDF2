@@ -258,6 +258,7 @@ func rotateImageRGBA(img *image.RGBA, deg int) *image.RGBA {
 // debugRender enables pixmap_render diagnostics via GOPDF_DEBUG_RENDER.
 var debugRender = os.Getenv("GOPDF_DEBUG_RENDER") != ""
 
+
 func min2(a, b float64) float64 {
 	if a < b {
 		return a
@@ -313,6 +314,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 	syncTextCTM := func() {
 		ts.ctmA, ts.ctmD, ts.ctmE, ts.ctmF = ctmA, ctmD, ctmE, ctmF
 		ts.clip = clip
+		ts.fill = fillColor
 	}
 	syncTextCTM()
 	inText := false
@@ -541,6 +543,24 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				g := uint8(stack[len(stack)-1] * 255)
 				fillColor = color.RGBA{R: g, G: g, B: g, A: 255}
 				stack = stack[:len(stack)-1]
+			}
+
+		case "gs":
+			// ExtGState: apply the fill/stroke alpha (/ca //CA) so opacity
+			// renders; the colors keep their RGB and carry the alpha in A.
+			if i >= 1 && strings.HasPrefix(string(tokens[i-1]), "/") {
+				name := string(tokens[i-1])
+				if ref, ok := page.resources.extgstates[name]; ok {
+					if gsObj, ok2 := parser.objects[ref]; ok2 {
+						ca := extractNumValue(gsObj.dict, "/ca")
+						if ca >= 0 && ca <= 1 {
+							a := uint8(ca*255 + 0.5)
+							fillColor.A = a
+							strokeColor.A = a
+							syncTextCTM()
+						}
+					}
+				}
 			}
 
 		case "Do":
