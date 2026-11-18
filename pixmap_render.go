@@ -748,6 +748,15 @@ func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA
 		thick = 1
 	}
 	bounds := img.Bounds()
+	// skip segments with an endpoint far off-page: coordinates confused
+	// across nested scale spaces (PPT-exported forms) produce wild jumps
+	// that streak across the page; real figure strokes stay near the page
+	for k := 0; k+1 < len(pts); k++ {
+		if offPageDist(pts[k], bounds) > float64(bounds.Dx()) ||
+			offPageDist(pts[k+1], bounds) > float64(bounds.Dx()) {
+			return
+		}
+	}
 	for i := 0; i+1 < len(pts); i++ {
 		x0, y0 := pts[i][0], pts[i][1]
 		x1, y1 := pts[i+1][0], pts[i+1][1]
@@ -756,6 +765,24 @@ func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA
 }
 
 var drawThickLineWarned bool
+
+// offPageDist returns how far a device-space point lies outside the
+// image bounds (0 when inside).
+func offPageDist(p [2]float64, bounds image.Rectangle) float64 {
+	dx := 0.0
+	if p[0] < float64(bounds.Min.X) {
+		dx = float64(bounds.Min.X) - p[0]
+	} else if p[0] > float64(bounds.Max.X) {
+		dx = p[0] - float64(bounds.Max.X)
+	}
+	dy := 0.0
+	if p[1] < float64(bounds.Min.Y) {
+		dy = float64(bounds.Min.Y) - p[1]
+	} else if p[1] > float64(bounds.Max.Y) {
+		dy = p[1] - float64(bounds.Max.Y)
+	}
+	return math.Hypot(dx, dy)
+}
 
 // drawThickLine rasterizes one segment with integer thickness.
 func drawThickLine(img *image.RGBA, x0, y0, x1, y1 float64, thick int, c color.RGBA, bounds image.Rectangle, clip *[4]int) {

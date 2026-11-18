@@ -149,6 +149,12 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 	if font == nil || len(codes) == 0 {
 		return
 	}
+	// text runs at absurd sizes (200pt+) come from coordinate confusion in
+	// deeply scaled form XObjects (PPT exports) — their glyph outlines
+	// cross the page as streaks; real text never reaches this size
+	if fontSize > 400 {
+		return
+	}
 	if font.t1 != nil {
 		drawType1Run(img, font.t1, codes, fontSize, penX, penY, fill, csPx, wsPx, ts.clip)
 		return
