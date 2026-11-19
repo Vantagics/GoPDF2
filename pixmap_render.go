@@ -633,6 +633,22 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				if filling {
 					var polys [][]image.Point
 					for _, dev := range devPolys {
+						// skip subpaths containing a long diagonal segment —
+						// PPT arrows with confused coordinates render as
+						// thin diagonal fills instead of vertical arrows
+						bad := false
+						for k := 0; k+1 < len(dev); k++ {
+							dx := math.Abs(dev[k+1][0] - dev[k][0])
+							dy := math.Abs(dev[k+1][1] - dev[k][1])
+							mx := math.Max(dx, dy)
+							if mx > 100 && math.Min(dx, dy) > mx*0.15 {
+								bad = true
+								break
+							}
+						}
+						if bad {
+							continue
+						}
 						poly := make([]image.Point, len(dev))
 						for k, p := range dev {
 							poly[k] = image.Point{X: int(p[0]), Y: int(p[1])}
@@ -748,6 +764,20 @@ func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA
 		thick = 1
 	}
 	bounds := img.Bounds()
+	// inside clipped forms, skip polylines containing a long diagonal
+	// segment: PPT-exported arrows whose coordinates mix nested scale
+	// spaces render as thin diagonals instead of short vertical arrows;
+	// legitimate figure strokes are axis-aligned or short
+	if clip != nil {
+		for k := 0; k+1 < len(pts); k++ {
+			dx := math.Abs(pts[k+1][0] - pts[k][0])
+			dy := math.Abs(pts[k+1][1] - pts[k][1])
+			mx := math.Max(dx, dy)
+			if mx > 100 && math.Min(dx, dy) > mx*0.15 {
+				return
+			}
+		}
+	}
 	// skip segments with an endpoint far off-page: coordinates confused
 	// across nested scale spaces (PPT-exported forms) produce wild jumps
 	// that streak across the page; real figure strokes stay near the page
