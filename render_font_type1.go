@@ -847,7 +847,7 @@ var _ = strings.TrimSpace
 // drawType1Run rasterizes a run of single-byte codes through a Type1 font.
 // Contours stay in font space (y-up, 1000/em); drawGlyphContours performs
 // the y flip and device translation like it does for TrueType glyphs.
-func drawType1Run(img *image.RGBA, font *type1Font, codes []byte, fontSize float64, penX, penY float64, fill color.RGBA, csPx, wsPx float64, clip *[4]int) {
+func drawType1Run(img *image.RGBA, font *type1Font, codes []byte, fontSize float64, penX, penY float64, fill color.RGBA, csPx, wsPx float64, clip *[4]int, mask *image.RGBA) {
 	scale := fontSize / 1000.0
 	for _, code := range codes {
 		name := font.encoding[code]
@@ -859,7 +859,7 @@ func drawType1Run(img *image.RGBA, font *type1Font, codes []byte, fontSize float
 		}
 		contours, _ := font.glyphOutline(name)
 		if len(contours) > 0 {
-			drawGlyphContours(img, contours, scale, penX, penY, fill, clip)
+			drawGlyphContours(img, contours, scale, penX, penY, fill, clip, mask)
 		}
 		penX += font.codeAdvance(code, name)*scale + csPx
 		if name == "space" {

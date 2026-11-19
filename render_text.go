@@ -46,6 +46,9 @@ type renderTextState struct {
 	// clip rect in device pixels (nil = unclipped), mirrored from the
 	// graphics state by W n.
 	clip *[4]int
+	// rasterized clip path (nil = unclipped): pixels with A == 0 are
+	// outside the clip and are not painted.
+	clipMask *image.RGBA
 }
 
 // effFontSize returns the rendered font size: Tf sets the nominal size and
@@ -156,7 +159,7 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 		return
 	}
 	if font.t1 != nil {
-		drawType1Run(img, font.t1, codes, fontSize, penX, penY, fill, csPx, wsPx, ts.clip)
+		drawType1Run(img, font.t1, codes, fontSize, penX, penY, fill, csPx, wsPx, ts.clip, ts.clipMask)
 		return
 	}
 	if font.ttf == nil {
@@ -186,7 +189,7 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 			continue
 		}
 		// glyph origin at pen, y flipped (font y-up -> image y-down)
-		drawGlyphContours(img, contours, scale, penX, penY, fill, ts.clip)
+		drawGlyphContours(img, contours, scale, penX, penY, fill, ts.clip, ts.clipMask)
 		penX += font.ttf.glyphWidth(gid)*scale + csPx
 		if isSpace {
 			penX += wsPx
@@ -195,7 +198,7 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 }
 
 // drawGlyphContours flattens quadratic outlines and fills them.
-func drawGlyphContours(img *image.RGBA, contours [][]glyphPt, scale, penX, penY float64, fill color.RGBA, clip *[4]int) {
+func drawGlyphContours(img *image.RGBA, contours [][]glyphPt, scale, penX, penY float64, fill color.RGBA, clip *[4]int, mask *image.RGBA) {
 	var polys [][]image.Point
 	for _, contour := range contours {
 		if len(contour) < 3 {
@@ -254,12 +257,12 @@ func drawGlyphContours(img *image.RGBA, contours [][]glyphPt, scale, penX, penY 
 			polys = append(polys, poly)
 		}
 	}
-	fillPolygonEvenOdd(img, polys, fill, clip)
+	fillPolygonEvenOdd(img, polys, fill, clip, mask)
 }
 
 // fillPolygonEvenOdd rasterizes polygons with the even-odd rule using a
 // scanline crossing algorithm (covers holes in glyphs like 'o').
-func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA, clip *[4]int) {
+func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA, clip *[4]int, mask *image.RGBA) {
 	if len(polys) == 0 {
 		return
 	}
@@ -326,6 +329,9 @@ func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA,
 			pxEnd := int(math.Floor(xEnd))
 			for x := pxStart; x <= pxEnd; x++ {
 				if x < bounds.Min.X || x >= bounds.Max.X || y < bounds.Min.Y || y >= bounds.Max.Y {
+					continue
+				}
+				if mask != nil && mask.RGBAAt(x, y).A == 0 {
 					continue
 				}
 				// compute pixel coverage [0,1]

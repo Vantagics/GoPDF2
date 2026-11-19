@@ -118,7 +118,7 @@ func renderParsedPage(parser *rawPDFParser, pageIndex int, opt RenderOption) (im
 
 	stream := parser.getPageContentStream(pageIndex)
 	if len(stream) > 0 {
-		renderContentStream(img, stream, parser, page, scale, pageH, nil, nil)
+		renderContentStream(img, stream, parser, page, scale, pageH, nil, nil, nil)
 	}
 
 	// /CropBox: the visible area — crop the composed page to it (user
@@ -274,7 +274,7 @@ func max2(a, b float64) float64 {
 }
 
 // renderContentStream interprets a PDF content stream and draws onto the image.
-func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, page rawPDFPage, scale, pageH float64, ctmIn *[4]float64, clipIn *[4]int) {
+func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, page rawPDFPage, scale, pageH float64, ctmIn *[4]float64, clipIn *[4]int, maskIn *image.RGBA) {
 	tokens := tokenizeBytes(stream)
 
 	var stack []float64
@@ -285,13 +285,20 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 	// content inside form XObjects inherits the form's transform.
 	ctmA, ctmD := 1.0, 1.0
 	ctmE, ctmF := 0.0, 0.0
-	// axis-aligned device-space clip rect (x0, y0, x1, y1); nil = unclipped
+	// axis-aligned device-space clip rect (x0, y0, x1, y1); nil = unclipped.
+	// clipMask rasterizes the actual clip path so complex multi-subpath
+	// clips clip precisely instead of over-filling their bounding box.
+	// axis-aligned device-space clip rect (x0, y0, x1, y1); nil = unclipped.
+	// clipMask rasterizes the actual clip path so complex multi-subpath
+	// clips clip precisely instead of over-filling their bounding box.
 	var clip *[4]int
+	var clipMask *image.RGBA
 	if ctmIn != nil {
 		ctmA, ctmD = (*ctmIn)[0], (*ctmIn)[1]
 		ctmE, ctmF = (*ctmIn)[2], (*ctmIn)[3]
 	}
 	clip = clipIn
+	clipMask = maskIn
 
 	// graphics state stack for q/Q (CTM + colors + line width + clip)
 	type graphicsState struct {
@@ -299,6 +306,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 		fill, stroke           color.RGBA
 		lineWidth              float64
 		clip                   *[4]int
+		clipMask               *image.RGBA
 	}
 	var gsStack []graphicsState
 	clipPending := false
@@ -630,6 +638,23 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 					}
 					devPolys = append(devPolys, dev)
 				}
+				if filling && os.Getenv("GOPDF_FILL_TRACE") != "" {
+					fmt.Println("PAINT color:", fillColor, "nsub:", len(subpaths))
+					for si, sp := range subpaths {
+						minX, minY, maxX, maxY := 1<<30, 1<<30, -(1<<30), -(1<<30)
+						for _, pt := range sp {
+							px := int(pt[0] * scale)
+							py := int((pageH - pt[1]) * scale)
+							if px < minX { minX = px }
+							if px > maxX { maxX = px }
+							if py < minY { minY = py }
+							if py > maxY { maxY = py }
+						}
+						if si < 6 {
+							fmt.Println("FILL sub", si, "bbox:", minX, minY, maxX, maxY, "pts:", len(sp), "color:", fillColor)
+						}
+					}
+				}
 				if filling {
 					var polys [][]image.Point
 					for _, dev := range devPolys {
@@ -655,7 +680,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 						}
 						polys = append(polys, poly)
 					}
-					fillPolygonEvenOdd(img, polys, fillColor, clip)
+					fillPolygonEvenOdd(img, polys, fillColor, clip, clipMask)
 				}
 				if stroking {
 					// the line width scales with the CTM (form XObjects with
@@ -702,10 +727,43 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 							}
 						}
 					}
+					// pad the mask rect by the stroke width so strokes at
+					// the clip edge survive
+					pad := int(lineWidth*scale) + 2
+					minX -= pad
+					minY -= pad
+					maxX += pad
+					maxY += pad
+					b := img.Bounds()
+					if minX < b.Min.X { minX = b.Min.X }
+					if minY < b.Min.Y { minY = b.Min.Y }
+					if maxX > b.Max.X { maxX = b.Max.X }
+					if maxY > b.Max.Y { maxY = b.Max.Y }
+					if maxX <= minX || maxY <= minY {
+						clip, clipMask = nil, nil
+						syncTextCTM()
+						subpaths = subpaths[:0]
+						stack = stack[:0]
+						continue
+					}
 					c := [4]int{minX, minY, maxX, maxY}
 					clip = &c
+					// rasterize the clip path into a mask: white inside the
+					// path (even-odd), transparent outside — complex clips
+					// clip precisely instead of over-filling their bbox
+					mask := image.NewRGBA(image.Rect(minX, minY, maxX, maxY))
+					var mpoly [][]image.Point
+					for _, sp := range subpaths {
+						poly := make([]image.Point, len(sp))
+						for k, pt := range sp {
+							poly[k] = image.Point{X: int(pt[0] * scale), Y: int((pageH - pt[1]) * scale)}
+						}
+						mpoly = append(mpoly, poly)
+					}
+					fillPolygonEvenOdd(mask, mpoly, color.RGBA{R: 255, G: 255, B: 255, A: 255}, nil, nil)
+					clipMask = mask
 				} else {
-					clip = nil
+					clip, clipMask = nil, nil
 				}
 				syncTextCTM()
 			}
@@ -727,7 +785,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			gsStack = append(gsStack, graphicsState{
 				ctmA: ctmA, ctmD: ctmD, ctmE: ctmE, ctmF: ctmF,
 				fill: fillColor, stroke: strokeColor, lineWidth: lineWidth,
-				clip: clip,
+				clip: clip, clipMask: clipMask,
 			})
 		case "Q":
 			// Restore graphics state
@@ -738,6 +796,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				fillColor, strokeColor = gs.fill, gs.stroke
 				lineWidth = gs.lineWidth
 				clip = gs.clip
+				clipMask = gs.clipMask
 				syncTextCTM()
 			}
 
@@ -989,7 +1048,7 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 					}
 				}
 			}
-			renderContentStream(img, obj.stream, parser, subPage, scale, pageH, &subCTM, bboxClip)
+			renderContentStream(img, obj.stream, parser, subPage, scale, pageH, &subCTM, bboxClip, nil)
 		}
 		return
 	}
