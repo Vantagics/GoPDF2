@@ -638,23 +638,6 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 					}
 					devPolys = append(devPolys, dev)
 				}
-				if filling && os.Getenv("GOPDF_FILL_TRACE") != "" {
-					fmt.Println("PAINT color:", fillColor, "nsub:", len(subpaths))
-					for si, sp := range subpaths {
-						minX, minY, maxX, maxY := 1<<30, 1<<30, -(1<<30), -(1<<30)
-						for _, pt := range sp {
-							px := int(pt[0] * scale)
-							py := int((pageH - pt[1]) * scale)
-							if px < minX { minX = px }
-							if px > maxX { maxX = px }
-							if py < minY { minY = py }
-							if py > maxY { maxY = py }
-						}
-						if si < 6 {
-							fmt.Println("FILL sub", si, "bbox:", minX, minY, maxX, maxY, "pts:", len(sp), "color:", fillColor)
-						}
-					}
-				}
 				if filling {
 					var polys [][]image.Point
 					for _, dev := range devPolys {
