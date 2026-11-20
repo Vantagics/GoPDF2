@@ -303,13 +303,15 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 	clip = clipIn
 	clipMask = maskIn
 
-	// graphics state stack for q/Q (CTM + colors + line width + clip)
+	// graphics state stack for q/Q (CTM + colors + line width + clip + dash)
 	type graphicsState struct {
 		ctmA, ctmD, ctmE, ctmF float64
 		fill, stroke           color.RGBA
 		lineWidth              float64
 		clip                   *[4]int
 		clipMask               *image.RGBA
+		dash                   []float64
+		dashPhase              float64
 	}
 	var gsStack []graphicsState
 	clipPending := false
@@ -320,6 +322,9 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 	curX, curY := 0.0, 0.0 // current point in user space
 	subX, subY := 0.0, 0.0 // subpath start (for h closepath)
 	lineWidth := 1.0
+	// dash pattern in user-space units (scaled to device px at stroke time)
+	var dash []float64
+	dashPhase := 0.0
 
 	// text state
 	fontResources := resolveRenderFonts(parser, page)
@@ -712,9 +717,17 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 					if strokeW > 100 {
 						strokeW = 100
 					}
+					// dash pattern also scales with the CTM into device px
+					devDash := make([]float64, len(dash))
+					for k, dv := range dash {
+						devDash[k] = dv * scale * math.Abs(ctmA)
+						if devDash[k] <= 0 {
+							devDash[k] = 1
+						}
+					}
 					for _, dev := range devPolys {
 						if len(dev) >= 2 {
-							strokePolyline(img, dev, strokeW, strokeColor, clip)
+							strokePolyline(img, dev, strokeW, strokeColor, clip, devDash, dashPhase*scale*math.Abs(ctmA))
 						}
 					}
 				}
@@ -803,12 +816,36 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				stack = stack[:len(stack)-1]
 			}
 
+		case "d":
+			// Set dash pattern: [a b …] phase d. The phase is the operand;
+			// pattern elements come from the array just before it.
+			if closeIdx := findTokenBackwards(tokens, i, "]"); closeIdx >= 0 {
+				if openIdx := findTokenBackwards(tokens, closeIdx, "["); openIdx >= 0 {
+					dash = dash[:0]
+					for _, dt := range tokens[openIdx+1 : closeIdx] {
+						if v, err := strconv.ParseFloat(string(dt), 64); err == nil && v > 0 && v < 10000 {
+							dash = append(dash, v)
+						}
+					}
+					if len(dash) > 0 && len(stack) >= 1 {
+						dashPhase = stack[len(stack)-1]
+					}
+				}
+			}
+			stack = stack[:0]
+			if len(dash) == 0 {
+				dashPhase = 0
+			}
+
 		case "q":
-			// Save graphics state (CTM + colors + line width + clip)
+			// Save graphics state (CTM + colors + line width + clip + dash)
+			dashCopy := make([]float64, len(dash))
+			copy(dashCopy, dash)
 			gsStack = append(gsStack, graphicsState{
 				ctmA: ctmA, ctmD: ctmD, ctmE: ctmE, ctmF: ctmF,
 				fill: fillColor, stroke: strokeColor, lineWidth: lineWidth,
 				clip: clip, clipMask: clipMask,
+				dash: dashCopy, dashPhase: dashPhase,
 			})
 		case "Q":
 			// Restore graphics state
@@ -820,6 +857,8 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				lineWidth = gs.lineWidth
 				clip = gs.clip
 				clipMask = gs.clipMask
+				dash = append(dash[:0], gs.dash...)
+				dashPhase = gs.dashPhase
 				syncTextCTM()
 			}
 
@@ -840,7 +879,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 // drawRectOnImage draws a rectangle outline on the image.
 // strokePolyline draws connected segments with a simple thickness model:
 // hairlines get a 1px Bresenham, wider widths get 2-3 px coverage.
-func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA, clip *[4]int) {
+func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA, clip *[4]int, dash []float64, dashPhase float64) {
 	thick := int(wPx + 0.5)
 	if thick < 1 {
 		thick = 1
@@ -869,11 +908,72 @@ func strokePolyline(img *image.RGBA, pts [][2]float64, wPx float64, c color.RGBA
 			return
 		}
 	}
+	if len(dash) == 0 {
+		for i := 0; i+1 < len(pts); i++ {
+			drawThickLine(img, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1], thick, c, bounds, clip)
+		}
+		return
+	}
+	// dashed stroke: walk the polyline once, alternating on/off spans by
+	// arc length (even pattern indices paint, odd skip; phase shifts the
+	// cycle start)
+	dIdx := 0
+	dRem := dash[0]
+	if total := dashSum(dash); total > 0 {
+		p := math.Mod(dashPhase, total)
+		if p < 0 {
+			p += total
+		}
+		dIdx, dRem = dashIndexAt(dash, p)
+	}
 	for i := 0; i+1 < len(pts); i++ {
 		x0, y0 := pts[i][0], pts[i][1]
 		x1, y1 := pts[i+1][0], pts[i+1][1]
-		drawThickLine(img, x0, y0, x1, y1, thick, c, bounds, clip)
+		segLen := math.Hypot(x1-x0, y1-y0)
+		s := 0.0
+		for s < segLen {
+			step := segLen - s
+			if dRem < step {
+				step = dRem
+			}
+			if dIdx%2 == 0 && step > 0.01 {
+				t0, t1 := s/segLen, (s+step)/segLen
+				drawThickLine(img,
+					x0+(x1-x0)*t0, y0+(y1-y0)*t0,
+					x0+(x1-x0)*t1, y0+(y1-y0)*t1,
+					thick, c, bounds, clip)
+			}
+			s += step
+			dRem -= step
+			if dRem <= 0.0001 {
+				dIdx++
+				if dIdx >= len(dash) {
+					dIdx = 0
+				}
+				dRem = dash[dIdx]
+			}
+		}
 	}
+}
+
+// dashSum totals a dash pattern's cycle length.
+func dashSum(dash []float64) float64 {
+	t := 0.0
+	for _, v := range dash {
+		t += v
+	}
+	return t
+}
+
+// dashIndexAt maps an arc-length offset into (pattern index, remaining).
+func dashIndexAt(dash []float64, p float64) (int, float64) {
+	for i, v := range dash {
+		if p < v {
+			return i, v - p
+		}
+		p -= v
+	}
+	return 0, dash[0]
 }
 
 var drawThickLineWarned bool
@@ -1170,6 +1270,21 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 func findArrayStart(tokens [][]byte, opIdx int) int {
 	for j := opIdx - 1; j >= 0; j-- {
 		if bytes.Equal(tokens[j], []byte("[")) {
+			return j
+		}
+	}
+	return -1
+}
+
+// findTokenBackwards scans backwards from opIdx (exclusive) for an exact
+// token match, bounded by 32 tokens to stay local to the current operator.
+func findTokenBackwards(tokens [][]byte, opIdx int, want string) int {
+	lo := opIdx - 32
+	if lo < 0 {
+		lo = 0
+	}
+	for j := opIdx - 1; j >= lo; j-- {
+		if bytes.Equal(tokens[j], []byte(want)) {
 			return j
 		}
 	}
