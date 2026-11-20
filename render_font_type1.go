@@ -595,10 +595,10 @@ func (p *type1Interp) run(cs []byte, depth int) {
 			}
 			p.stack = p.stack[:0]
 		case 30: // vhcurveto
-			p.flexCurve(p.stack, true)
+			p.flexCurve(p.stack, false)
 			p.stack = p.stack[:0]
 		case 31: // hvcurveto
-			p.flexCurve(p.stack, false)
+			p.flexCurve(p.stack, true)
 			p.stack = p.stack[:0]
 		case 9: // closepath
 			p.flushContour()
@@ -656,40 +656,62 @@ func (p *type1Interp) composeSeac(asb, adx, ady float64, bchar, achar int, depth
 }
 
 // flexCurve handles vhcurveto/hvcurveto: alternating-axis curve chains.
-func (p *type1Interp) flexCurve(args []float64, vertFirst bool) {
-	// groups of 4 deltas (d1 d2 d3 d4): curve control/end pairs; an
-	// optional trailing 5th delta adds a final line.
-	k := 0
-	vert := vertFirst
-	for k+4 <= len(args) {
-		d1, d2, d3, d4 := args[k], args[k+1], args[k+2], args[k+3]
-		var c1x, c1y, c2x, c2y, ex, ey float64
-		if vert {
-			c1x, c1y = p.x, p.y+d1
-			c2x, c2y = c1x+d2, c1y+d3
-			ex, ey = c2x, c2y+d4
-		} else {
-			c1x, c1y = p.x+d1, p.y
-			c2x, c2y = c1x+d2, c1y+d3
-			ex, ey = c2x+d4, c2y
+func (p *type1Interp) flexCurve(args []float64, horizFirst bool) {
+	// vhcurveto/hvcurveto per Adobe T1 (mirroring fontTools'
+	// T1OutlineExtractor): each curve carries 4 deltas — first control is
+	// a single-axis displacement, second control a full delta, and the
+	// final point is displaced along the opposite axis; an optional 5th
+	// delta completes the final point on the primary axis. Curves then
+	// alternate axes until the argument list is exhausted.
+	v := func(a []float64) []float64 {
+		dya, dxb, dyb, dxc := a[0], a[1], a[2], a[3]
+		rest := a[4:]
+		var dyc float64
+		if len(rest) == 1 {
+			dyc = rest[0]
+			rest = nil
 		}
-		p.curveTo(c1x, c1y, c2x, c2y, ex, ey)
-		vert = !vert
-		k += 4
+		// cumulative deltas: control2 relative to control1, end relative
+		// to control2 (rrcurveto semantics)
+		p.curveTo(p.x, p.y+dya,
+			p.x+dxb, p.y+dya+dyb,
+			p.x+dxb+dxc, p.y+dya+dyb+dyc)
+		return rest
 	}
-	if k < len(args) {
-		d := args[k]
-		if vert {
-			p.lineTo(p.x, p.y+d)
+	h := func(a []float64) []float64 {
+		dxa, dxb, dyb, dyc := a[0], a[1], a[2], a[3]
+		rest := a[4:]
+		var dxc2 float64
+		if len(rest) == 1 {
+			dxc2 = rest[0]
+			rest = nil
+		}
+		p.curveTo(p.x+dxa, p.y,
+			p.x+dxa+dxb, p.y+dyb,
+			p.x+dxa+dxb+dxc2, p.y+dyb+dyc)
+		return rest
+	}
+	rest := args
+	for len(rest) > 0 {
+		if horizFirst {
+			rest = h(rest)
+			if len(rest) > 0 {
+				rest = v(rest)
+			}
 		} else {
-			p.lineTo(p.x+d, p.y)
+			rest = v(rest)
+			if len(rest) > 0 {
+				rest = h(rest)
+			}
 		}
 	}
 }
 
-// doFlex draws the two rrcurvetos of the Type 1 flex sequence, popping
-// the 16 accumulated values (flex height + 12 curve deltas + 2 ref
-// point deltas + 2 finals) like fontTools' T1OutlineExtractor.
+// doFlex draws the two rrcurvetos of the Type 1 flex sequence, mirroring
+// fontTools' T1OutlineExtractor.doFlex: all popped values are deltas, the
+// first curve is shifted by the flex reference displacement (rpx/rpy left
+// on the stack by the suppressed flex-start rmoveto), and the final
+// displacement pair is pushed back for the charstring to consume.
 func (p *type1Interp) doFlex() {
 	pop := func() float64 {
 		if len(p.stack) == 0 {
@@ -699,8 +721,8 @@ func (p *type1Interp) doFlex() {
 		p.stack = p.stack[:len(p.stack)-1]
 		return v
 	}
-	_ = pop()          // finaly
-	finalx := pop()    // finalx
+	finaly := pop()
+	finalx := pop()
 	_ = pop()          // flex height
 	p3y := pop()       // p3
 	p3x := pop()
@@ -714,12 +736,19 @@ func (p *type1Interp) doFlex() {
 	bcp2x := pop()
 	bcp1y := pop()     // bcp1
 	bcp1x := pop()
-	_ = pop()          // rp y
-	rpx := pop()       // rp x
-	_ = rpx
-	p.curveTo(bcp1x, bcp1y, bcp2x, bcp2y, p2x, p2y)
-	p.curveTo(bcp3x, bcp3y, bcp4x, bcp4y, p3x, p3y)
-	p.lineTo(finalx, p.y)
+	rpy := pop()       // flex reference displacement
+	rpx := pop()
+	// curve 1 relative to the current point, biased by the reference point
+	// (fontTools pushes bcp1+rpx then calls rrcurveto)
+	p.curveTo(p.x+bcp1x+rpx, p.y+bcp1y+rpy,
+		p.x+bcp1x+rpx+bcp2x, p.y+bcp1y+rpy+bcp2y,
+		p.x+bcp1x+rpx+bcp2x+p2x, p.y+bcp1y+rpy+bcp2y+p2y)
+	// curve 2 continues relative to curve 1's endpoint
+	p.curveTo(p.x+bcp3x, p.y+bcp3y,
+		p.x+bcp3x+bcp4x, p.y+bcp3y+bcp4y,
+		p.x+bcp3x+bcp4x+p3x, p.y+bcp3y+bcp4y+p3y)
+	// leave the final displacement pair on the stack (fontTools parity)
+	p.stack = append(p.stack, finalx, finaly)
 }
 
 func charstringNextValue(b []byte) (int, int) {

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	// register the DCTDecode (JPEG) and GIF decoders for image XObjects
+	_ "image/gif"
+	_ "image/jpeg"
 	"image/png"
 	"math"
 	"os"
@@ -528,20 +531,56 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			}
 
 		case "c":
-			// curveto: x1 y1 x2 y2 x3 y3 — cubic bezier flattened into
-			// segments through the CTM
+			// curveto: x1 y1 x2 y2 x3 y3 — ABSOLUTE cubic bezier (PDF spec)
+			// flattened into segments through the CTM
 			if len(stack) >= 6 {
 				a := stack[len(stack)-6:]
 				stack = stack[:len(stack)-6]
-				x1u, y1u := curX+a[0], curY+a[1]
-				x2u, y2u := x1u+a[2], y1u+a[3]
-				x3u, y3u := x2u+a[4], y2u+a[5]
+				x1u, y1u := a[0], a[1]
+				x2u, y2u := a[2], a[3]
+				x3u, y3u := a[4], a[5]
 				const steps = 8
 				for t := 1; t <= steps; t++ {
 					tt := float64(t) / steps
 					mt := 1 - tt
 					px := mt*mt*mt*curX + 3*mt*mt*tt*x1u + 3*mt*tt*tt*x2u + tt*tt*tt*x3u
 					py := mt*mt*mt*curY + 3*mt*mt*tt*y1u + 3*mt*tt*tt*y2u + tt*tt*tt*y3u
+					curPath = append(curPath, [2]float64{ctmA*px + ctmE, ctmD*py + ctmF})
+				}
+				curX, curY = x3u, y3u
+			}
+
+		case "v":
+			// v: x2 y2 x3 y3 — first control coincides with current point
+			if len(stack) >= 4 {
+				a := stack[len(stack)-4:]
+				stack = stack[:len(stack)-4]
+				x2u, y2u := a[0], a[1]
+				x3u, y3u := a[2], a[3]
+				const steps = 8
+				for t := 1; t <= steps; t++ {
+					tt := float64(t) / steps
+					mt := 1 - tt
+					px := mt*mt*mt*curX + 3*mt*mt*tt*curX + 3*mt*tt*tt*x2u + tt*tt*tt*x3u
+					py := mt*mt*mt*curY + 3*mt*mt*tt*curY + 3*mt*tt*tt*y2u + tt*tt*tt*y3u
+					curPath = append(curPath, [2]float64{ctmA*px + ctmE, ctmD*py + ctmF})
+				}
+				curX, curY = x3u, y3u
+			}
+
+		case "y":
+			// y: x1 y1 x3 y3 — second control coincides with the end point
+			if len(stack) >= 4 {
+				a := stack[len(stack)-4:]
+				stack = stack[:len(stack)-4]
+				x1u, y1u := a[0], a[1]
+				x3u, y3u := a[2], a[3]
+				const steps = 8
+				for t := 1; t <= steps; t++ {
+					tt := float64(t) / steps
+					mt := 1 - tt
+					px := mt*mt*mt*curX + 3*mt*mt*tt*x1u + 3*mt*tt*tt*x3u + tt*tt*tt*x3u
+					py := mt*mt*mt*curY + 3*mt*mt*tt*y1u + 3*mt*tt*tt*y3u + tt*tt*tt*y3u
 					curPath = append(curPath, [2]float64{ctmA*px + ctmE, ctmD*py + ctmF})
 				}
 				curX, curY = x3u, y3u
@@ -555,22 +594,23 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			curX, curY = subX, subY
 
 		case "RG":
-			// Set stroke color RGB
+			// Set stroke color RGB — preserve the alpha set by a preceding
+			// /gs (ExtGState /CA), which must survive color changes
 			if len(stack) >= 3 {
 				r := uint8(stack[len(stack)-3] * 255)
 				g := uint8(stack[len(stack)-2] * 255)
 				b := uint8(stack[len(stack)-1] * 255)
-				strokeColor = color.RGBA{R: r, G: g, B: b, A: 255}
+				strokeColor = color.RGBA{R: r, G: g, B: b, A: strokeColor.A}
 				stack = stack[:len(stack)-3]
 			}
 
 		case "rg":
-			// Set fill color RGB
+			// Set fill color RGB — preserve alpha (see RG)
 			if len(stack) >= 3 {
 				r := uint8(stack[len(stack)-3] * 255)
 				g := uint8(stack[len(stack)-2] * 255)
 				b := uint8(stack[len(stack)-1] * 255)
-				fillColor = color.RGBA{R: r, G: g, B: b, A: 255}
+				fillColor = color.RGBA{R: r, G: g, B: b, A: fillColor.A}
 				stack = stack[:len(stack)-3]
 			}
 
@@ -578,7 +618,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			// Set stroke gray
 			if len(stack) >= 1 {
 				g := uint8(stack[len(stack)-1] * 255)
-				strokeColor = color.RGBA{R: g, G: g, B: g, A: 255}
+				strokeColor = color.RGBA{R: g, G: g, B: g, A: strokeColor.A}
 				stack = stack[:len(stack)-1]
 			}
 
@@ -586,7 +626,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 			// Set fill gray
 			if len(stack) >= 1 {
 				g := uint8(stack[len(stack)-1] * 255)
-				fillColor = color.RGBA{R: g, G: g, B: g, A: 255}
+				fillColor = color.RGBA{R: g, G: g, B: g, A: fillColor.A}
 				stack = stack[:len(stack)-1]
 			}
 
@@ -937,6 +977,21 @@ func drawRectFill(img *image.RGBA, x, y, w, h float64, c color.RGBA, clip *[4]in
 			if px < 0 || px >= bounds.Max.X {
 				continue
 			}
+			if c.A == 0 {
+				continue // fully transparent (ExtGState /ca 0)
+			}
+			if c.A < 255 {
+				old := img.RGBAAt(px, py)
+				a := uint32(c.A)
+				inv := 255 - a
+				img.SetRGBA(px, py, color.RGBA{
+					R: uint8((uint32(c.R)*a + uint32(old.R)*inv) / 255),
+					G: uint8((uint32(c.G)*a + uint32(old.G)*inv) / 255),
+					B: uint8((uint32(c.B)*a + uint32(old.B)*inv) / 255),
+					A: 255,
+				})
+				continue
+			}
 			img.SetRGBA(px, py, c)
 		}
 	}
@@ -994,6 +1049,8 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 		if obj.stream != nil {
 			subPage := page
 			subPage.resources.fonts = pageFontsWithForm(parser, page.resources.fonts, obj.dict)
+			subPage.resources.xobjs = pageXObjsWithForm(parser, page.resources.xobjs, obj.dict)
+			subPage.resources.extgstates = pageExtGStatesWithForm(parser, page.resources.extgstates, obj.dict)
 			// device = CTM · /Matrix (a/d/e/f components)
 			fa, fd := 1.0, 1.0
 			fe, ff := 0.0, 0.0
@@ -1043,7 +1100,6 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 	if obj.stream == nil {
 		return
 	}
-
 	// Raw 8-bit sample bitmaps (DeviceRGB/DeviceGray — how GoPdf embeds PNG
 	// inputs) cannot go through image.Decode; build the image directly and
 	// fall back to the generic decoder for JPEG/PNG payload streams.
@@ -1055,6 +1111,10 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 			return
 		}
 	}
+	// /SMask soft mask (e.g. JPEG headers exported by PowerPoint carry their
+	// transparency in a separate DeviceGray stream — without it the JPEG's
+	// black background paints solid)
+	srcImg = applySMask(srcImg, &obj, parser)
 
 	// Calculate destination rectangle
 	dstX := int(ctmE * scale)
@@ -1156,31 +1216,52 @@ func rawSampleImage(obj *rawPDFObject, parser *rawPDFParser) image.Image {
 			}
 		}
 	}
-	// soft mask: 8-bit gray samples -> alpha channel
-	if smRef := extractRef(obj.dict, "/SMask"); smRef > 0 && parser != nil {
-		if smObj, ok := parser.objects[smRef]; ok && smObj.stream != nil &&
-			strings.Contains(smObj.dict, "/DeviceGray") {
-			sw := int(extractNumValue(smObj.dict, "/Width"))
-			sh := int(extractNumValue(smObj.dict, "/Height"))
-			if sw > 0 && sh > 0 && len(smObj.stream) >= sw*sh {
-				for y := 0; y < h; y++ {
-					for x := 0; x < w; x++ {
-						sy := y * sh / h
-						sx := x * sw / w
-						c := m.RGBAAt(x, y)
-						// image.RGBA is premultiplied — scale RGB by alpha
-						a := uint32(smObj.stream[sy*sw+sx])
-						c.A = uint8(a)
-						c.R = uint8(uint16(c.R) * uint16(a) / 255)
-						c.G = uint8(uint16(c.G) * uint16(a) / 255)
-						c.B = uint8(uint16(c.B) * uint16(a) / 255)
-						m.SetRGBA(x, y, c)
-					}
-				}
-			}
+	return m
+}
+
+// applySMask returns src with a per-pixel alpha taken from the XObject's
+// /SMask soft mask (8-bit DeviceGray samples, raw or compressed). RGB is
+// kept; the mask gray scales the alpha. Returns src unchanged when the
+// image carries no usable soft mask.
+func applySMask(src image.Image, obj *rawPDFObject, parser *rawPDFParser) image.Image {
+	if parser == nil {
+		return src
+	}
+	smRef := extractRef(obj.dict, "/SMask")
+	if smRef <= 0 {
+		return src
+	}
+	smObj, ok := parser.objects[smRef]
+	if !ok || smObj.stream == nil {
+		return src
+	}
+	mask := rawSampleImage(&smObj, nil)
+	if mask == nil {
+		var err error
+		mask, _, err = image.Decode(strings.NewReader(string(smObj.stream)))
+		if err != nil || mask == nil {
+			return src
 		}
 	}
-	return m
+	sb := src.Bounds()
+	mb := mask.Bounds()
+	sw, sh := mb.Dx(), mb.Dy()
+	if sw <= 0 || sh <= 0 {
+		return src
+	}
+	out := image.NewNRGBA(image.Rect(0, 0, sb.Dx(), sb.Dy()))
+	for y := 0; y < sb.Dy(); y++ {
+		my := mb.Min.Y + y*sh/sb.Dy()
+		for x := 0; x < sb.Dx(); x++ {
+			r, g, b, _ := src.At(sb.Min.X+x, sb.Min.Y+y).RGBA()
+			mr, _, _, _ := mask.At(mb.Min.X+x*sw/sb.Dx(), my).RGBA()
+			out.SetNRGBA(x, y, color.NRGBA{
+				R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8),
+				A: uint8(mr >> 8), // mask is gray: R channel carries the value
+			})
+		}
+	}
+	return out
 }
 
 func clamp01(v float64) float64 {

@@ -1156,34 +1156,48 @@ func (p *rawPDFParser) extractResources(dict string, pageObjNum int) rawPDFResou
 }
 
 func (p *rawPDFParser) extractNamedRefs(dict, key string, out map[string]int) {
-	idx := strings.Index(dict, key)
-	if idx < 0 {
-		return
-	}
-	rest := dict[idx+len(key):]
-	rest = strings.TrimLeft(rest, " \t\r\n")
-	if len(rest) == 0 {
-		return
-	}
-	if rest[0] == '<' && len(rest) > 1 && rest[1] == '<' {
-		// inline dict
-		inner := extractDict([]byte(rest))
-		matches := reNamedRef.FindAllStringSubmatch(inner, -1)
-		for _, m := range matches {
-			n, _ := strconv.Atoi(m[2])
-			out["/"+m[1]] = n
+	// Scan every occurrence of the key: the first match may be an unrelated
+	// use of the same token (e.g. "/Type /XObject" appearing before the
+	// /Resources' "/XObject <<" dictionary), so only an occurrence followed
+	// by an inline dict or an indirect ref counts.
+	offset := 0
+	for {
+		idx := strings.Index(dict[offset:], key)
+		if idx < 0 {
+			return
 		}
-	} else {
-		// reference to another object
-		if n, _ := parseObjRefAt(rest); n > 0 {
-			if obj, ok := p.objects[n]; ok {
-				matches := reNamedRef.FindAllStringSubmatch(obj.dict, -1)
-				for _, mm := range matches {
-					nn, _ := strconv.Atoi(mm[2])
-					out["/"+mm[1]] = nn
+		idx += offset
+		offset = idx + len(key)
+		rest := dict[offset:]
+		rest = strings.TrimLeft(rest, " \t\r\n")
+		if len(rest) == 0 {
+			return
+		}
+		switch {
+		case rest[0] == '<' && len(rest) > 1 && rest[1] == '<':
+			// inline dict
+			inner := extractDict([]byte(rest))
+			matches := reNamedRef.FindAllStringSubmatch(inner, -1)
+			for _, m := range matches {
+				n, _ := strconv.Atoi(m[2])
+				out["/"+m[1]] = n
+			}
+			return
+		case rest[0] >= '0' && rest[0] <= '9':
+			// reference to another object
+			if n, _ := parseObjRefAt(rest); n > 0 {
+				if obj, ok := p.objects[n]; ok {
+					matches := reNamedRef.FindAllStringSubmatch(obj.dict, -1)
+					for _, mm := range matches {
+						nn, _ := strconv.Atoi(mm[2])
+						out["/"+mm[1]] = nn
+					}
 				}
+				return
 			}
 		}
+		// otherwise this occurrence is an unrelated token (e.g. /Type /Font)
+		// — keep scanning
 	}
 }
 

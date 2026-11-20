@@ -334,6 +334,10 @@ func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA,
 				if mask != nil && mask.RGBAAt(x, y).A == 0 {
 					continue
 				}
+				if fill.A == 0 {
+					// fully transparent fill (ExtGState /ca 0) — no-op
+					continue
+				}
 				// compute pixel coverage [0,1]
 				coverL := math.Max(float64(x), xStart)
 				coverR := math.Min(float64(x+1), xEnd)
@@ -341,19 +345,23 @@ func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA,
 				if cov <= 0 {
 					continue
 				}
-				if cov >= 1 {
-					img.SetRGBA(x, y, fill)
+				// fold the fill's own alpha into the coverage blend
+				fa := float64(fill.A) / 255.0
+				old := img.RGBAAt(x, y)
+				var out color.RGBA
+				if cov >= 1 && fa >= 1 {
+					out = fill
 				} else {
-					// blend: new = fill*cov + old*(1-cov)
-					old := img.RGBAAt(x, y)
-					blended := color.RGBA{
-						R: uint8(float64(fill.R)*cov + float64(old.R)*(1-cov)),
-						G: uint8(float64(fill.G)*cov + float64(old.G)*(1-cov)),
-						B: uint8(float64(fill.B)*cov + float64(old.B)*(1-cov)),
+					eff := cov * fa
+					// blend: new = fill*eff + old*(1-eff)
+					out = color.RGBA{
+						R: uint8(float64(fill.R)*eff + float64(old.R)*(1-eff)),
+						G: uint8(float64(fill.G)*eff + float64(old.G)*(1-eff)),
+						B: uint8(float64(fill.B)*eff + float64(old.B)*(1-eff)),
 						A: 255,
 					}
-					img.SetRGBA(x, y, blended)
 				}
+				img.SetRGBA(x, y, out)
 			}
 		}
 	}
@@ -492,6 +500,53 @@ func pageFontsWithForm(parser *rawPDFParser, pageFonts map[string]int, formDict 
 	formFonts := make(map[string]int)
 	parser.extractNamedRefs(resDict, "/Font", formFonts)
 	for n, o := range formFonts {
+		if _, clash := merged[n]; !clash {
+			merged[n] = o
+		}
+	}
+	return merged
+}
+
+// pageXObjsWithForm merges the form's /XObject entries into the page's,
+// mirroring pageFontsWithForm so image XObjects inside form streams draw.
+func pageXObjsWithForm(parser *rawPDFParser, pageXObjs map[string]int, formDict string) map[string]int {
+	merged := make(map[string]int, len(pageXObjs)+4)
+	for n, o := range pageXObjs {
+		merged[n] = o
+	}
+	resDict := formDict
+	if resRef := extractRef(formDict, "/Resources"); resRef > 0 {
+		if obj, ok := parser.objects[resRef]; ok {
+			resDict = obj.dict
+		}
+	}
+	formXObjs := make(map[string]int)
+	parser.extractNamedRefs(resDict, "/XObject", formXObjs)
+	for n, o := range formXObjs {
+		if _, clash := merged[n]; !clash {
+			merged[n] = o
+		}
+	}
+	return merged
+}
+
+// pageExtGStatesWithForm merges a form XObject's /ExtGState entries into the
+// page's set so /gs operators inside the form resolve (transparency groups
+// exported by PowerPoint rely on per-form /Alpha states).
+func pageExtGStatesWithForm(parser *rawPDFParser, pageGS map[string]int, formDict string) map[string]int {
+	merged := make(map[string]int, len(pageGS)+4)
+	for n, o := range pageGS {
+		merged[n] = o
+	}
+	resDict := formDict
+	if resRef := extractRef(formDict, "/Resources"); resRef > 0 {
+		if obj, ok := parser.objects[resRef]; ok {
+			resDict = obj.dict
+		}
+	}
+	formGS := make(map[string]int)
+	parser.extractNamedRefs(resDict, "/ExtGState", formGS)
+	for n, o := range formGS {
 		if _, clash := merged[n]; !clash {
 			merged[n] = o
 		}
