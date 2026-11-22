@@ -2,6 +2,7 @@ package gopdf
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -11,24 +12,133 @@ import (
 
 // ============================================================
 // Text rasterization for RenderPageToImage.
-// Resolves embedded TrueType fonts (/FontFile2), decodes text operations
-// from the content stream and rasterizes glyph outlines with an even-odd
-// scanline fill. Identity-H codes map directly to glyph IDs; simple-font
-// bytes map through the font's cmap.
+// Resolves embedded TrueType fonts (/FontFile2), CFF fonts
+// (/FontFile3 /Type1C and /CIDFontType0C), Type1 fonts (/FontFile),
+// decodes text operations from the content stream and rasterizes glyph
+// outlines with an even-odd scanline fill. Identity-H codes map directly
+// to glyph IDs; simple-font bytes map through the font's cmap.
 // ============================================================
 
 // renderFont is a parsed embedded font for rasterization.
 type renderFont struct {
-	ttf      *minTTF
-	t1       *type1Font // Type1 (FontFile) alternative — LaTeX/Nimbus fonts
-	isType0  bool       // Identity-H: 2-byte codes are glyph IDs
-	codeSize int
+	ttf *minTTF
+	t1  *type1Font // Type1 (FontFile) alternative — LaTeX/Nimbus fonts
+	cff *cffFont   // CFF (FontFile3 /Type1C) — InDesign/Illustrator subsets
+	// diffs: char code -> glyph name from the font's /Differences array
+	diffs map[byte]string
+	// cidToGIDBytes: /CIDToGIDMap stream of a CIDFontType2 font (2-byte
+	// big-endian GID per CID); nil = identity mapping
+	cidToGIDBytes []byte
+	// cffWidths: PDF /Widths (simple fonts) or /W (Type0) advances by code
+	// or CID, in 1/1000 em — authoritative when present
+	cffWidths map[int]float64
+	isType0   bool // Identity-H: 2-byte codes are glyph IDs
+	codeSize  int
+}
+
+// cffGlyphName resolves one char code to its glyph name via the font's
+// /Differences (when present) or WinAnsiEncoding.
+func cffGlyphName(diffs map[byte]string, code int) string {
+	if diffs != nil {
+		if n, ok := diffs[byte(code)]; ok && n != "" {
+			return n
+		}
+	}
+	return winAnsiGlyphName(code)
+}
+
+// parseCIDWidths parses a Type0 font's /W array into cid->width (1/1000
+// em). Entries are "c [w1 w2 ...]" or "c1 c2 w"; brackets are re-scanned
+// from the raw dict because extractNumberArray flattens them.
+func parseCIDWidths(dict string, out map[int]float64) {
+	idx := strings.Index(dict, "/W ")
+	if idx < 0 {
+		idx = strings.Index(dict, "/W[")
+	}
+	if idx < 0 {
+		return
+	}
+	rest := dict[idx+2:]
+	start := strings.IndexByte(rest, '[')
+	if start < 0 {
+		return
+	}
+	end := strings.IndexByte(rest[start:], ']')
+	if end < 0 {
+		return
+	}
+	arr := rest[start+1 : start+end]
+
+	// tokenize: numbers with '[' group start and ']' group end markers
+	type wtok struct {
+		num   float64
+		brack int // 0 = number, 1 = '[', -1 = ']'
+	}
+	var toks []wtok
+	i := 0
+	for i < len(arr) {
+		ch := arr[i]
+		if ch == '[' {
+			toks = append(toks, wtok{brack: 1})
+			i++
+		} else if ch == ']' {
+			toks = append(toks, wtok{brack: -1})
+			i++
+		} else if ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t' {
+			i++
+		} else {
+			j := i
+			if arr[j] == '-' {
+				j++
+			}
+			digits := 0
+			for j < len(arr) && (arr[j] >= '0' && arr[j] <= '9' || arr[j] == '.') {
+				j++
+				digits++
+			}
+			if digits == 0 {
+				i++
+				continue
+			}
+			var v float64
+			fmt.Sscanf(arr[i:j], "%g", &v)
+			toks = append(toks, wtok{num: v})
+			i = j
+		}
+	}
+	// interpret: c [w...] groups or c1 c2 w
+	for k := 0; k < len(toks); k++ {
+		if toks[k].brack != 0 {
+			continue
+		}
+		code := int(toks[k].num)
+		if k+1 < len(toks) && toks[k+1].brack == 1 {
+			// c [w w w ...]
+			j := k + 2
+			w := code
+			for j < len(toks) && toks[j].brack == 0 {
+				out[w] = toks[j].num
+				w++
+				j++
+			}
+			k = j // at the ']'
+		} else if k+2 < len(toks) && toks[k+1].brack == 0 && toks[k+2].brack == 0 {
+			c1, c2, w := code, int(toks[k+1].num), toks[k+2].num
+			for cc := c1; cc <= c2; cc++ {
+				out[cc] = w
+			}
+			k += 2
+		}
+	}
 }
 
 // renderTextState tracks the PDF text state while rendering.
+// renderMode follows the PDF Tr operator: 3 = invisible (used by the OCR
+// text layers of scanned forms — must not be painted).
 type renderTextState struct {
 	font         *renderFont
 	fontSize     float64
+	renderMode   int
 	tmX, tmY     float64 // text matrix position (PDF space, y-up)
 	tmA, tmB     float64 // text matrix scale/rotation components
 	lineA, lineB float64 // line matrix components (restored by Td/TD/T*)
@@ -58,7 +168,7 @@ func (ts *renderTextState) effFontSize() float64 {
 }
 
 // resolveRenderFonts builds resource-name -> parsed embedded font mappings
-// for the page (FontFile2 TrueType only).
+// for the page (TrueType, CFF and Type1).
 func resolveRenderFonts(parser *rawPDFParser, page rawPDFPage) map[string]*renderFont {
 	fonts := make(map[string]*renderFont, len(page.resources.fonts))
 	for name, objNum := range page.resources.fonts {
@@ -66,17 +176,29 @@ func resolveRenderFonts(parser *rawPDFParser, page rawPDFPage) map[string]*rende
 		if !ok {
 			continue
 		}
-		// FontDescriptor -> FontFile2. For Type0 fonts the descriptor lives
-		// on the descendant CID font, not on the top-level dict.
+		// FontDescriptor -> FontFile2/3. For Type0 fonts the descriptor
+		// lives on the descendant CID font, not on the top-level dict.
 		fdRef := extractRef(obj.dict, "/FontDescriptor")
-		if fdRef <= 0 {
-			if descRef := firstRefInArray(obj.dict, "/DescendantFonts"); descRef > 0 {
-				if descObj, ok := parser.objects[descRef]; ok {
-					fdRef = extractRef(descObj.dict, "/FontDescriptor")
-				}
+		descRef := firstRefInArray(obj.dict, "/DescendantFonts")
+		if fdRef <= 0 && descRef > 0 {
+			if descObj, ok := parser.objects[descRef]; ok {
+				fdRef = extractRef(descObj.dict, "/FontDescriptor")
 			}
 		}
 		if fdRef <= 0 {
+			// no descriptor at all: a non-embedded base-14 font — resolve
+			// it from the system fonts so the text still renders
+			if m := resolveSystemTTF(extractName(obj.dict, "/BaseFont")); m != nil {
+				rf := &renderFont{ttf: m}
+				rf.isType0 = strings.Contains(obj.dict, "/Type0") ||
+					strings.Contains(obj.dict, "/Identity-H")
+				if rf.isType0 {
+					rf.codeSize = 2
+				} else {
+					rf.codeSize = 1
+				}
+				fonts[name] = rf
+			}
 			continue
 		}
 		fdObj, ok := parser.objects[fdRef]
@@ -84,10 +206,10 @@ func resolveRenderFonts(parser *rawPDFParser, page rawPDFPage) map[string]*rende
 			continue
 		}
 		// Type1 (FontFile) first — LaTeX/Nimbus documents embed these;
-		// fall through to TrueType (FontFile2) otherwise.
+		// fall through to CFF and TrueType otherwise.
 		if ff1Ref := extractRef(fdObj.dict, "/FontFile"); ff1Ref > 0 {
-			if ff1Obj, ok := parser.objects[ff1Ref]; ok && ff1Obj.stream != nil {
-				if t1, err := parseType1Font(ff1Obj.stream); err == nil {
+			if ff1Data := parser.streamData(ff1Ref); ff1Data != nil {
+				if t1, err := parseType1Font(ff1Data); err == nil {
 					var diffs map[byte]string
 					if encRef := extractRef(obj.dict, "/Encoding"); encRef > 0 {
 						if encObj, ok2 := parser.objects[encRef]; ok2 {
@@ -120,15 +242,66 @@ func resolveRenderFonts(parser *rawPDFParser, page rawPDFPage) map[string]*rende
 				}
 			}
 		}
+		// CFF (FontFile3) — /Type1C simple fonts and /CIDFontType0C CID
+		// fonts, the dominant embedded formats for InDesign/Illustrator/
+		// Word/LaTeX PDF exports
+		if ff3Ref := extractRef(fdObj.dict, "/FontFile3"); ff3Ref > 0 {
+			if ff3Data := parser.streamData(ff3Ref); ff3Data != nil {
+				if c, err := parseCFFFont(ff3Data); err == nil {
+					rf := &renderFont{cff: c, cffWidths: map[int]float64{}}
+					rf.isType0 = strings.Contains(obj.dict, "/Type0") ||
+						strings.Contains(obj.dict, "/Identity-H") ||
+						c.isCID
+					if rf.isType0 {
+						rf.codeSize = 2
+						// CID /W array: cid [w...] or c1 c2 w — advances
+						// in 1/1000 em keyed by CID
+						parseCIDWidths(obj.dict, rf.cffWidths)
+					} else {
+						rf.codeSize = 1
+						var diffs map[byte]string
+						if encRef := extractRef(obj.dict, "/Encoding"); encRef > 0 {
+							if encObj, ok2 := parser.objects[encRef]; ok2 {
+								diffs = parseDifferences(encObj.dict)
+							}
+						} else if strings.Contains(obj.dict, "/Differences") {
+							diffs = parseDifferences(obj.dict)
+						}
+						rf.diffs = diffs
+						wArr := extractNumberArray(obj.dict, "/Widths")
+						if first := extractNumValue(obj.dict, "/FirstChar"); first >= 0 {
+							for k, wv := range wArr {
+								rf.cffWidths[int(first)+k] = wv
+							}
+						}
+					}
+					fonts[name] = rf
+					continue
+				}
+			}
+		}
+		// no usable embedded data — non-embedded base-14 font: resolve
+		// from system fonts so the text still renders
+		if m := resolveSystemTTF(extractName(obj.dict, "/BaseFont")); m != nil {
+			rf := &renderFont{ttf: m}
+			rf.isType0 = strings.Contains(obj.dict, "/Type0") ||
+				strings.Contains(obj.dict, "/Identity-H")
+			if rf.isType0 {
+				rf.codeSize = 2
+			} else {
+				rf.codeSize = 1
+			}
+			fonts[name] = rf
+			continue
+		}
 		ff2Ref := extractRef(fdObj.dict, "/FontFile2")
 		if ff2Ref <= 0 {
 			continue
 		}
-		ff2Obj, ok := parser.objects[ff2Ref]
-		if !ok || ff2Obj.stream == nil {
+		fontData := parser.streamData(ff2Ref)
+		if fontData == nil {
 			continue
 		}
-		fontData := ff2Obj.stream
 		m, err := parseMinTTF(fontData)
 		if err != nil {
 			continue
@@ -138,6 +311,15 @@ func resolveRenderFonts(parser *rawPDFParser, page rawPDFPage) map[string]*rende
 			strings.Contains(obj.dict, "/Identity-H")
 		if rf.isType0 {
 			rf.codeSize = 2
+			// CIDToGIDMap may be a stream (CID -> GID, 2-byte big-endian
+			// per entry) instead of the /Identity default
+			if descRef > 0 {
+				if dObj, ok := parser.objects[descRef]; ok {
+					if mapRef := extractRef(dObj.dict, "/CIDToGIDMap"); mapRef > 0 {
+						rf.cidToGIDBytes = parser.streamData(mapRef)
+					}
+				}
+			}
 		} else {
 			rf.codeSize = 1
 		}
@@ -146,11 +328,26 @@ func resolveRenderFonts(parser *rawPDFParser, page rawPDFPage) map[string]*rende
 	return fonts
 }
 
+// cidToGID resolves one CID through the font's /CIDToGIDMap stream.
+func cidToGID(rf *renderFont, cid int) int {
+	if rf.cidToGIDBytes == nil {
+		return cid // identity
+	}
+	off := cid * 2
+	if off+2 > len(rf.cidToGIDBytes) {
+		return 0 // out of range: notdef
+	}
+	return int(rf.cidToGIDBytes[off])<<8 | int(rf.cidToGIDBytes[off+1])
+}
+
 // drawTextRun rasterizes one text run at the given pen position (device
 // pixels), filling glyph outlines with the fill color.
 func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float64, penX, penY float64, fill color.RGBA, csPx, wsPx float64, ts *renderTextState) {
 	if font == nil || len(codes) == 0 {
 		return
+	}
+	if ts != nil && ts.renderMode == 3 {
+		return // invisible text (OCR layer)
 	}
 	// text runs at absurd sizes (200pt+) come from coordinate confusion in
 	// deeply scaled form XObjects (PPT exports) — their glyph outlines
@@ -162,6 +359,53 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 		drawType1Run(img, font.t1, codes, fontSize, penX, penY, fill, csPx, wsPx, ts.clip, ts.clipMask)
 		return
 	}
+	if font.cff != nil {
+		scaleEm := fontSize / float64(font.cff.unitsPerEm)
+		if font.codeSize == 2 {
+			// Type0/Identity-H: 2-byte CIDs resolve through the font's
+			// CID->GID map (subset fonts renumber glyphs)
+			for i := 0; i+1 < len(codes); i += 2 {
+				cid := int(codes[i])<<8 | int(codes[i+1])
+				gid := cid
+				if font.cff.cidToGID != nil {
+					if g, ok := font.cff.cidToGID[cid]; ok {
+						gid = g
+					} else {
+						continue
+					}
+				}
+				if contours := font.cff.glyphContours(gid); len(contours) > 0 {
+					drawGlyphContours(img, contours, scaleEm, penX, penY, fill, ts.clip, ts.clipMask)
+				}
+				if w, ok2 := font.cffWidths[gid]; ok2 && w > 0 {
+					penX += w * scaleEm
+				} else {
+					penX += fontSize * 0.5
+				}
+				penX += csPx
+			}
+			return
+		}
+		for _, code := range codes {
+			name := cffGlyphName(font.diffs, int(code))
+			gid, ok := font.cff.glyphGID(name)
+			var contours [][]glyphPt
+			if ok {
+				contours = font.cff.glyphContours(gid)
+			}
+			if len(contours) > 0 {
+				drawGlyphContours(img, contours, scaleEm, penX, penY, fill, ts.clip, ts.clipMask)
+			}
+			if w, ok2 := font.cffWidths[int(code)]; ok2 && w > 0 {
+				penX += w * scaleEm
+			} else if font.cff.advWidths != nil {
+				// fallback: charstring width is in 1/1000 em for Type1C
+				penX += fontSize / 1000 * 500
+			}
+			penX += csPx
+		}
+		return
+	}
 	if font.ttf == nil {
 		return
 	}
@@ -171,7 +415,8 @@ func drawTextRun(img *image.RGBA, font *renderFont, codes []byte, fontSize float
 		var gid uint16
 		var isSpace bool
 		if font.codeSize == 2 && i+1 < len(codes) {
-			gid = uint16(codes[i])<<8 | uint16(codes[i+1])
+			cid := int(codes[i])<<8 | int(codes[i+1])
+			gid = uint16(cidToGID(font, cid))
 			isSpace = gid == 3 // common space GID in Identity-H subsets
 		} else {
 			gid = font.ttf.charToGlyph(int(codes[i]))
@@ -367,7 +612,6 @@ func fillPolygonEvenOdd(img *image.RGBA, polys [][]image.Point, fill color.RGBA,
 	}
 }
 
-// renderDrawText handles a show-text operator inside BT/ET during rendering.
 // measureTextRunDev measures a run's advance width in device pixels.
 func measureTextRunDev(font *renderFont, codes []byte, fontSizeDev, csPx, wsPx float64) float64 {
 	if font == nil || len(codes) == 0 {
@@ -391,6 +635,40 @@ func measureTextRunDev(font *renderFont, codes []byte, fontSizeDev, csPx, wsPx f
 		}
 		return w
 	}
+	if font.cff != nil {
+		sc := fontSizeDev / float64(font.cff.unitsPerEm)
+		w := 0.0
+		if font.codeSize == 2 {
+			for i := 0; i+1 < len(codes); i += 2 {
+				cid := int(codes[i])<<8 | int(codes[i+1])
+				gid := cid
+				if font.cff.cidToGID != nil {
+					if g, ok := font.cff.cidToGID[cid]; ok {
+						gid = g
+					} else {
+						continue
+					}
+				}
+				if adv, ok2 := font.cffWidths[gid]; ok2 && adv > 0 {
+					w += adv * sc
+				} else if gid < len(font.cff.advWidths) && font.cff.advWidths[gid] > 0 {
+					w += font.cff.advWidths[gid] * sc
+				} else {
+					w += fontSizeDev * 0.5
+				}
+				w += csPx
+			}
+			return w
+		}
+		for _, code := range codes {
+			if adv, ok2 := font.cffWidths[int(code)]; ok2 && adv > 0 {
+				w += adv*sc + csPx
+			} else {
+				w += fontSizeDev*0.5 + csPx // nominal fallback
+			}
+		}
+		return w
+	}
 	if font.ttf == nil {
 		return 0
 	}
@@ -400,7 +678,8 @@ func measureTextRunDev(font *renderFont, codes []byte, fontSizeDev, csPx, wsPx f
 		var gid uint16
 		var isSpace bool
 		if font.codeSize == 2 && i+1 < len(codes) {
-			gid = uint16(codes[i])<<8 | uint16(codes[i+1])
+			cid := int(codes[i])<<8 | int(codes[i+1])
+			gid = uint16(cidToGID(font, cid))
 			isSpace = gid == 3
 		} else {
 			gid = font.ttf.charToGlyph(int(codes[i]))
@@ -481,8 +760,6 @@ func firstRefInArray(dict, key string) int {
 	n, _ := parseObjRefAt(rest[start+1 : start+end])
 	return n
 }
-
-// helper re-exported for the probe above
 
 // pageFontsWithForm merges a form's own /Font resources with the page-level
 // ones so text inside the form resolves its font correctly.

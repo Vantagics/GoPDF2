@@ -29,23 +29,43 @@ var errMinTTF = errors.New("not a supported TrueType font")
 
 // parseMinTTF parses raw TrueType data. cmap and hmtx are optional.
 func parseMinTTF(data []byte) (*minTTF, error) {
-	// sfnt version: 0x00010000, Apple "true", or "ttcf" collection header
-	if len(data) < 12 || !(data[0] == 0 && data[1] == 1 && data[2] == 0 && data[3] == 0) &&
-		!(data[0] == 't' && data[1] == 'r' && data[2] == 'u' && data[3] == 'e') {
+	// TrueType Collection ("ttcf"): parse the first embedded font. The
+	// table offsets inside the sub-font header are absolute from the TTC
+	// start, so the regular table scan below works on the full buffer.
+	if len(data) >= 12 && data[0] == 't' && data[1] == 't' && data[2] == 'c' && data[3] == 'f' {
+		if len(data) < 16 {
+			return nil, errMinTTF
+		}
+		subOff := int(binary.BigEndian.Uint32(data[12:16]))
+		if subOff <= 0 || subOff+12 > len(data) {
+			return nil, errMinTTF
+		}
+		return parseMinTTFAt(data, subOff)
+	}
+	return parseMinTTFAt(data, 0)
+}
+
+// parseMinTTFAt parses one sfnt font whose offset table starts at base.
+func parseMinTTFAt(data []byte, base int) (*minTTF, error) {
+	// sfnt version: 0x00010000 or Apple "true"
+	if len(data) < base+12 || !(data[base] == 0 && data[base+1] == 1 && data[base+2] == 0 && data[base+3] == 0) &&
+		!(data[base] == 't' && data[base+1] == 'r' && data[base+2] == 'u' && data[base+3] == 'e') {
 		return nil, errMinTTF
 	}
-	numTables := int(binary.BigEndian.Uint16(data[4:6]))
+	numTables := int(binary.BigEndian.Uint16(data[base+4 : base+6]))
 	type tbl struct{ offset, length uint32 }
 	tables := make(map[string]tbl, numTables)
 	for i := 0; i < numTables; i++ {
-		base := 12 + 16*i
-		if base+16 > len(data) {
+		entry := base + 12 + 16*i
+		if entry+16 > len(data) {
 			break
 		}
-		tag := string(data[base : base+4])
+		tag := string(data[entry : entry+4])
 		tables[tag] = tbl{
-			offset: binary.BigEndian.Uint32(data[base+8 : base+12]),
-			length: binary.BigEndian.Uint32(data[base+12 : base+16]),
+			// table offsets are absolute from the buffer start (TTC
+			// sub-fonts share the buffer)
+			offset: binary.BigEndian.Uint32(data[entry+8 : entry+12]),
+			length: binary.BigEndian.Uint32(data[entry+12 : entry+16]),
 		}
 	}
 

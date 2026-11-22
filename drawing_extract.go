@@ -329,7 +329,11 @@ func (d *drawingExtractor) doForm(name string, depth int) {
 		return
 	}
 	obj, ok := d.parser.objects[objNum]
-	if !ok || obj.stream == nil {
+	if !ok {
+		return
+	}
+	formStream := d.parser.streamData(objNum)
+	if formStream == nil {
 		return
 	}
 	if !strings.Contains(obj.dict, "/Subtype /Form") && !strings.Contains(obj.dict, "/Subtype/Form") {
@@ -358,7 +362,7 @@ func (d *drawingExtractor) doForm(name string, depth int) {
 		}
 		d.xobjs = merged
 	}
-	d.walk(obj.stream, depth+1)
+	d.walk(formStream, depth+1)
 	d.xobjs = savedXobjs
 	d.ctmA, d.ctmD, d.ctmE, d.ctmF = saved.ctmA, saved.ctmD, saved.ctmE, saved.ctmF
 	d.stroke, d.fill, d.width = saved.stroke, saved.fill, saved.width

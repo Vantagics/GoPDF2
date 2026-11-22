@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"os"
 	// register the DCTDecode (JPEG) and GIF decoders for image XObjects
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -261,7 +261,6 @@ func rotateImageRGBA(img *image.RGBA, deg int) *image.RGBA {
 // debugRender enables pixmap_render diagnostics via GOPDF_DEBUG_RENDER.
 var debugRender = os.Getenv("GOPDF_DEBUG_RENDER") != ""
 
-
 func min2(a, b float64) float64 {
 	if a < b {
 		return a
@@ -385,6 +384,19 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				ts.tlmX, ts.tlmY = ts.tmX, ts.tmY
 				stack = stack[:len(stack)-6]
 			}
+		case "Tr":
+			// text render mode: 3 = invisible (OCR layers on scanned forms)
+			if inText && len(stack) >= 1 {
+				ts.renderMode = int(stack[len(stack)-1])
+				stack = stack[:len(stack)-1]
+			} else if len(stack) >= 1 {
+				stack = stack[:len(stack)-1]
+			}
+		case "TL":
+			if inText && len(stack) >= 1 {
+				ts.leading = stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+			}
 		case "T*":
 			// next text line at the current leading
 			if inText {
@@ -416,32 +428,32 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				raw := renderTextOpBytes(tokens, i)
 				renderDrawText(img, ts, raw, pageH, scale, fontResources)
 			}
-			case "TJ":
-				if inText {
-					if start := findArrayStart(tokens, i); start >= 0 {
-						var run []byte
-						kern := 0.0
-						effTextSize := ts.effFontSize()
-						sizeDev := effTextSize * math.Abs(ts.ctmA) * scale
-						csPx := ts.charSpacing * scale * math.Abs(ts.ctmA)
-						wsPx := ts.wordSpacing * scale * math.Abs(ts.ctmA)
-						flushRun := func() {
-							if len(run) == 0 {
-								return
-							}
-							penX := ts.ctmA*(ts.tmX+kern) + ts.ctmE
-							penY := pageH - (ts.ctmD*ts.tmY + ts.ctmF)
-							w := measureTextRunDev(ts.font, run, sizeDev, csPx, wsPx)
-							drawTextRun(img, ts.font, run, sizeDev, penX*scale, penY*scale, ts.fill, csPx, wsPx, ts)
-							// advance the text pen by the kern displacement plus
-							// the drawn width — without this, successive strings
-							// of one TJ array overlap
-							if ts.ctmA != 0 && scale != 0 {
-								ts.tmX += kern + w/(scale*ts.ctmA)
-							}
-							run = run[:0]
-							kern = 0
+		case "TJ":
+			if inText {
+				if start := findArrayStart(tokens, i); start >= 0 {
+					var run []byte
+					kern := 0.0
+					effTextSize := ts.effFontSize()
+					sizeDev := effTextSize * math.Abs(ts.ctmA) * scale
+					csPx := ts.charSpacing * scale * math.Abs(ts.ctmA)
+					wsPx := ts.wordSpacing * scale * math.Abs(ts.ctmA)
+					flushRun := func() {
+						if len(run) == 0 {
+							return
 						}
+						penX := ts.ctmA*(ts.tmX+kern) + ts.ctmE
+						penY := pageH - (ts.ctmD*ts.tmY + ts.ctmF)
+						w := measureTextRunDev(ts.font, run, sizeDev, csPx, wsPx)
+						drawTextRun(img, ts.font, run, sizeDev, penX*scale, penY*scale, ts.fill, csPx, wsPx, ts)
+						// advance the text pen by the kern displacement plus
+						// the drawn width — without this, successive strings
+						// of one TJ array overlap
+						if ts.ctmA != 0 && scale != 0 {
+							ts.tmX += kern + w/(scale*ts.ctmA)
+						}
+						run = run[:0]
+						kern = 0
+					}
 					for _, item := range tokens[start+1 : i] {
 						if isStringToken(item) {
 							// strip the <...> or (...) delimiters
@@ -617,6 +629,10 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				b := uint8(stack[len(stack)-1] * 255)
 				fillColor = color.RGBA{R: r, G: g, B: b, A: fillColor.A}
 				stack = stack[:len(stack)-3]
+				// text draws with ts.fill — keep it in sync with the
+				// current fill color (white-on-dark table headers were
+				// painted with the previous fill color and vanished)
+				syncTextCTM()
 			}
 
 		case "G":
@@ -633,6 +649,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 				g := uint8(stack[len(stack)-1] * 255)
 				fillColor = color.RGBA{R: g, G: g, B: g, A: fillColor.A}
 				stack = stack[:len(stack)-1]
+				syncTextCTM()
 			}
 
 		case "gs":
@@ -688,13 +705,17 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 					for _, dev := range devPolys {
 						// skip subpaths containing a long diagonal segment —
 						// PPT arrows with confused coordinates render as
-						// thin diagonal fills instead of vertical arrows
+						// page-spanning thin diagonal fills instead of
+						// vertical arrows. The threshold is deliberately
+						// high: legitimate diagonal-filled shapes (diamonds,
+						// triangles, arrowheads in charts) have segments
+						// well below it.
 						bad := false
 						for k := 0; k+1 < len(dev); k++ {
 							dx := math.Abs(dev[k+1][0] - dev[k][0])
 							dy := math.Abs(dev[k+1][1] - dev[k][1])
 							mx := math.Max(dx, dy)
-							if mx > 100 && math.Min(dx, dy) > mx*0.15 {
+							if mx > 300 && math.Min(dx, dy) > mx*0.15 {
 								bad = true
 								break
 							}
@@ -744,7 +765,7 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 					curPath = curPath[:0]
 				}
 				if len(subpaths) >= 1 {
-					minX, minY, maxX, maxY := 1<<30, 1<<30, -(1<<30), -(1<<30)
+					minX, minY, maxX, maxY := 1<<30, 1<<30, -(1 << 30), -(1 << 30)
 					for _, sp := range subpaths {
 						for _, pt := range sp {
 							px := int(pt[0] * scale)
@@ -771,10 +792,18 @@ func renderContentStream(img *image.RGBA, stream []byte, parser *rawPDFParser, p
 					maxX += pad
 					maxY += pad
 					b := img.Bounds()
-					if minX < b.Min.X { minX = b.Min.X }
-					if minY < b.Min.Y { minY = b.Min.Y }
-					if maxX > b.Max.X { maxX = b.Max.X }
-					if maxY > b.Max.Y { maxY = b.Max.Y }
+					if minX < b.Min.X {
+						minX = b.Min.X
+					}
+					if minY < b.Min.Y {
+						minY = b.Min.Y
+					}
+					if maxX > b.Max.X {
+						maxX = b.Max.X
+					}
+					if maxY > b.Max.Y {
+						maxY = b.Max.Y
+					}
 					if maxX <= minX || maxY <= minY {
 						clip, clipMask = nil, nil
 						syncTextCTM()
@@ -1141,6 +1170,7 @@ func renderXObject(img *image.RGBA, parser *rawPDFParser, page rawPDFPage, name 
 	if !ok {
 		return
 	}
+	obj.stream = parser.streamData(objNum)
 	// Form XObjects may carry more text/graphics — render their stream
 	// recursively with the form's own font resources merged in, composing
 	// the form's /Matrix (and nested forms' matrices) into the CTM so
@@ -1347,7 +1377,11 @@ func applySMask(src image.Image, obj *rawPDFObject, parser *rawPDFParser) image.
 		return src
 	}
 	smObj, ok := parser.objects[smRef]
-	if !ok || smObj.stream == nil {
+	if !ok {
+		return src
+	}
+	smObj.stream = parser.streamData(smRef)
+	if smObj.stream == nil {
 		return src
 	}
 	mask := rawSampleImage(&smObj, nil)

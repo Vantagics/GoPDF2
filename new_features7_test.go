@@ -758,8 +758,8 @@ func TestGetStream_And_SetStream(t *testing.T) {
 	}
 
 	var streamObjNum int
-	for num, obj := range parser.objects {
-		if obj.stream != nil && len(obj.stream) > 0 {
+	for num := range parser.objects {
+		if s := parser.streamData(num); s != nil && len(s) > 0 {
 			streamObjNum = num
 			break
 		}

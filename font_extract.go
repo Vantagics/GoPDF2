@@ -83,8 +83,8 @@ func extractFontsFromResources(parser *rawPDFParser, res rawPDFResources) []Extr
 					ffRef := extractRef(descObj.dict, key)
 					if ffRef > 0 {
 						f.IsEmbedded = true
-						if ffObj, ok := parser.objects[ffRef]; ok && ffObj.stream != nil {
-							f.Data = ffObj.stream
+						if ffData := parser.streamData(ffRef); ffData != nil {
+							f.Data = ffData
 						}
 						break
 					}

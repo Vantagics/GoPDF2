@@ -156,8 +156,11 @@ func checkXMPMetadata(data []byte, parser *rawPDFParser, level PDFAConformanceLe
 	// Look for XMP metadata in the catalog.
 	hasXMP := false
 	for _, obj := range parser.objects {
-		if strings.Contains(obj.dict, "/Metadata") && obj.stream != nil {
+		if strings.Contains(obj.dict, "/Metadata") && obj.rawStream != nil {
 			streamData := obj.stream
+			if streamData == nil {
+				streamData = parser.streamData(obj.num)
+			}
 			if bytes.Contains(streamData, []byte("pdfaid:part")) ||
 				bytes.Contains(streamData, []byte("pdfaSchema")) ||
 				bytes.Contains(streamData, []byte("http://www.aiim.org/pdfa")) {

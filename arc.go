@@ -41,11 +41,10 @@ func writeArcSegments(w io.Writer, cx, cy, r, startRad, endRad float64) {
 // from angle a1 to a2 (in radians). The arc must be <= 90 degrees.
 // Uses the standard Bézier approximation for circular arcs.
 func writeArcBezier(w io.Writer, cx, cy, r, a1, a2 float64) {
-	// Half-angle
-	halfAngle := (a2 - a1) / 2
-	// Bézier control point distance factor
-	// k = (4/3) * tan(halfAngle)
-	k := (4.0 / 3.0) * math.Tan(halfAngle)
+	// Bézier control point distance factor for a circular arc of sweep
+	// (a2-a1): kappa = (4/3) * tan(sweep/4). The sweep must be <= 90
+	// degrees here (writeArcSegments splits accordingly).
+	k := (4.0 / 3.0) * math.Tan((a2 - a1) / 4)
 
 	// Start point (already drawn to by moveto/lineto)
 	// End point

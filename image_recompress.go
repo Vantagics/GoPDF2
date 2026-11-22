@@ -77,6 +77,7 @@ func RecompressImages(pdfData []byte, opt RecompressOption) ([]byte, error) {
 
 	for objNum := range imageObjs {
 		obj := parser.objects[objNum]
+		obj.stream = parser.streamData(objNum)
 		recompressed, newDict, err := recompressImageObj(obj, opt)
 		if err != nil {
 			continue
@@ -199,11 +200,7 @@ func downscaleImage(src image.Image, maxW, maxH int) image.Image {
 
 func replaceObjectStream(pdfData []byte, objNum int, newDict string, newStream []byte) []byte {
 	objHeader := fmt.Sprintf("%d 0 obj\n", objNum)
-	idx := bytes.Index(pdfData, []byte(objHeader))
-	if idx < 0 {
-		objHeader = fmt.Sprintf("%d 0 obj\r\n", objNum)
-		idx = bytes.Index(pdfData, []byte(objHeader))
-	}
+	idx := locateObjectHeader(pdfData, objNum)
 	if idx < 0 {
 		return pdfData
 	}

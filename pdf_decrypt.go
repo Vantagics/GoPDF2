@@ -37,18 +37,42 @@ var (
 // detectEncryption checks if the PDF data contains an /Encrypt reference
 // in the trailer and returns the encryption object number, or 0 if not encrypted.
 func detectEncryption(data []byte) int {
-	// Find trailer dictionary.
+	// Classic trailer dictionary.
 	trailerIdx := bytes.LastIndex(data, []byte("trailer"))
-	if trailerIdx < 0 {
-		return 0
+	if trailerIdx >= 0 {
+		trailer := string(data[trailerIdx:])
+		m := reEncryptRef.FindStringSubmatch(trailer)
+		if m != nil {
+			n, _ := strconv.Atoi(m[1])
+			if n > 0 {
+				return n
+			}
+		}
 	}
-	trailer := string(data[trailerIdx:])
-	m := reEncryptRef.FindStringSubmatch(trailer)
-	if m == nil {
-		return 0
+	// Xref-stream PDFs (ISO 32000 §7.5.8) have no "trailer" keyword: the
+	// /Encrypt entry lives inside the /Type/XRef stream dictionary. The
+	// newest xref dict sits at the end of the file (incremental updates
+	// append), so the LAST /Encrypt ref is authoritative. A stray match
+	// inside encrypted binary content is harmless: authenticate fails on
+	// it and callers fall back to parsing the data as-is.
+	found := 0
+	for pos := 0; ; {
+		i := bytes.Index(data[pos:], []byte("/Encrypt"))
+		if i < 0 {
+			break
+		}
+		abs := pos + i
+		pos = abs + 8
+		m := reEncryptRef.FindSubmatch(data[abs:])
+		if m == nil {
+			continue
+		}
+		n, _ := strconv.Atoi(string(m[1]))
+		if n > 0 {
+			found = n
+		}
 	}
-	n, _ := strconv.Atoi(m[1])
-	return n
+	return found
 }
 
 // parseEncryptDict extracts encryption parameters from an encrypt dictionary string.
@@ -104,8 +128,10 @@ func authenticate(data []byte, password string) (*decryptContext, error) {
 		return nil, nil // not encrypted
 	}
 
-	// Parse the encryption object.
-	parser, err := newRawPDFParser(data)
+	// Parse the encryption object. Use the no-decrypt constructor: callers
+	// (newRawPDFParser's transparent-decryption branch) may themselves be
+	// inside a parse of the still-encrypted data.
+	parser, err := newRawPDFParserNoDecrypt(data)
 	if err != nil {
 		return nil, fmt.Errorf("parse PDF for decryption: %w", err)
 	}
@@ -124,11 +150,18 @@ func authenticate(data []byte, password string) (*decryptContext, error) {
 
 	if r == 6 {
 		// AES-256 (ISO 32000-2 §7.6.4.3.2/3): U/O are 48-byte hash-salt
-		// structures; the file key comes from UE/OE.
+		// structures; the file key comes from UE/OE. Some producers zero-
+		// pad U/O beyond 48 bytes — only the first 48 are meaningful.
 		uValue48 := extractHexOrLiteralString(encObj.dict, "/U")
 		oValue48 := extractHexOrLiteralString(encObj.dict, "/O")
 		ueValue := extractHexOrLiteralString(encObj.dict, "/UE")
 		oeValue := extractHexOrLiteralString(encObj.dict, "/OE")
+		if len(uValue48) > 48 {
+			uValue48 = uValue48[:48]
+		}
+		if len(oValue48) > 48 {
+			oValue48 = oValue48[:48]
+		}
 		trimmed := []byte(password)
 		// R6 passwords are NOT padded.
 		if len(trimmed) > 127 {
@@ -416,9 +449,28 @@ func (dc *decryptContext) objectKey(objNum int) []byte {
 }
 
 // decryptPDF decrypts all streams and strings in the PDF data.
-// Returns the decrypted PDF data with the /Encrypt reference removed.
+// locateObjectHeader finds the offset of the "N 0 obj" header for object N,
+// ensuring the match is not the tail of a longer object number ("5 0 obj"
+// must not match inside "105 0 obj"). Returns -1 when absent.
+func locateObjectHeader(data []byte, objNum int) int {
+	needle := []byte(fmt.Sprintf("%d 0 obj", objNum))
+	for pos := 0; ; {
+		i := bytes.Index(data[pos:], needle)
+		if i < 0 {
+			return -1
+		}
+		abs := pos + i
+		pos = abs + 1
+		if abs > 0 && data[abs-1] >= '0' && data[abs-1] <= '9' {
+			continue
+		}
+		return abs
+	}
+}
+
+// decryptPDF returns the decrypted PDF data with the /Encrypt reference removed.
 func decryptPDF(data []byte, dc *decryptContext) []byte {
-	parser, err := newRawPDFParser(data)
+	parser, err := newRawPDFParserNoDecrypt(data)
 	if err != nil {
 		return data
 	}
@@ -427,12 +479,11 @@ func decryptPDF(data []byte, dc *decryptContext) []byte {
 	copy(result, data)
 
 	for objNum, obj := range parser.objects {
-		if obj.stream == nil {
+		if obj.rawStream == nil {
 			continue
 		}
 		// Find the raw (undecoded) stream in the original data.
-		objHeader := fmt.Sprintf("%d 0 obj", objNum)
-		idx := bytes.Index(data, []byte(objHeader))
+		idx := locateObjectHeader(data, objNum)
 		if idx < 0 {
 			continue
 		}

@@ -260,8 +260,8 @@ func buildFontMap(parser *rawPDFParser, page rawPDFPage) map[string]*fontInfo {
 			// Try to parse /ToUnicode CMap
 			toUniRef := extractRef(obj.dict, "/ToUnicode")
 			if toUniRef > 0 {
-				if cmapObj, ok2 := parser.objects[toUniRef]; ok2 && cmapObj.stream != nil {
-					fi.toUni = parseCMap(cmapObj.stream)
+				if cmap := parser.streamData(toUniRef); cmap != nil {
+					fi.toUni = parseCMap(cmap)
 				}
 			}
 
@@ -1242,7 +1242,11 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 				continue
 			}
 			obj, found := ctx.parser.objects[objNum]
-			if !found || obj.stream == nil || !isFormXObject(obj.dict) {
+			if !found || !isFormXObject(obj.dict) {
+				continue
+			}
+			formStream := ctx.parser.streamData(objNum)
+			if formStream == nil {
 				continue
 			}
 			pageH := ctx.mediaBox[3] - ctx.mediaBox[1] // runs are per page height
@@ -1266,7 +1270,7 @@ func parseTextOperatorsCtx(ctx *extractionContext, stream []byte) []ExtractedTex
 					rotate:   ctx.rotate,
 					visited:  subVisited,
 				}
-				baseRuns = parseTextOperatorsCtx(sub, obj.stream)
+				baseRuns = parseTextOperatorsCtx(sub, formStream)
 				runsForPage[pageH] = baseRuns
 			}
 			// translate the cached un-offset runs by the cumulative Do offset

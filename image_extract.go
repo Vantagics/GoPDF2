@@ -169,10 +169,10 @@ func extractPageImages(parser *rawPDFParser, page rawPDFPage, placements []image
 		img.BitsPerComponent = extractIntValue(obj.dict, "/BitsPerComponent")
 		img.ColorSpace = extractName(obj.dict, "/ColorSpace")
 		img.Filter = extractFilterValue(obj.dict)
-		if obj.stream != nil {
+		if stream := parser.streamData(objNum); stream != nil {
 			// For FlateDecode, stream is already decompressed by parser.
 			// For DCTDecode (JPEG), the raw stream IS the JPEG data.
-			img.Data = obj.stream
+			img.Data = stream
 		}
 		// Apply placement info; /Rotate maps to visual page space
 		if p, ok := placementMap[name]; ok {

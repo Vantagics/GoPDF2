@@ -49,10 +49,30 @@ type rawPDFParser struct {
 type rawPDFObject struct {
 	num    int
 	dict   string // dictionary content between << >>
-	stream []byte // decompressed stream content (nil if not a stream)
+	stream []byte // decompressed stream content (decoded lazily on access)
+	// rawStream is the still-encoded stream payload as stored in the file.
+	// Streams are NOT decompressed at parse time — decodeStream on every
+	// stream dominated parse time on large documents (most streams are
+	// never needed for a given page's extraction). Use streamData().
+	rawStream []byte
 	// body holds the object content for objects with no dictionary and no
 	// stream (arrays, numbers, names — e.g. an indirect /Widths array).
 	body string
+}
+
+// streamData returns the decoded stream content of object objNum,
+// decompressing it on first access. Returns nil when the object has no
+// stream or does not exist.
+func (p *rawPDFParser) streamData(objNum int) []byte {
+	obj, ok := p.objects[objNum]
+	if !ok || obj.rawStream == nil {
+		return nil
+	}
+	if obj.stream == nil {
+		obj.stream = p.decodeStream(obj.rawStream, obj.dict)
+		p.objects[objNum] = obj
+	}
+	return obj.stream
 }
 
 // rawPDFPage holds parsed page info.
@@ -75,6 +95,23 @@ type rawPDFResources struct {
 
 // newRawPDFParser creates a parser for the given PDF data.
 func newRawPDFParser(data []byte) (*rawPDFParser, error) {
+	// Transparently decrypt owner-protected PDFs (empty user password),
+	// which are common for web-downloaded documents. decryptPDF strips
+	// the /Encrypt reference, so parsing the decrypted copy does not
+	// re-enter this branch. Password-protected files are left untouched
+	// — use OpenPDFDocumentWithPassword for those.
+	if detectEncryption(data) > 0 {
+		if dc, err := authenticate(data, ""); err == nil && dc != nil {
+			if decrypted := decryptPDF(data, dc); len(decrypted) > 0 && detectEncryption(decrypted) == 0 {
+				data = decrypted
+			}
+		}
+	}
+	return newRawPDFParserNoDecrypt(data)
+}
+
+// newRawPDFParserNoDecrypt parses without the transparent-decryption step.
+func newRawPDFParserNoDecrypt(data []byte) (*rawPDFParser, error) {
 	p := &rawPDFParser{
 		data:      data,
 		objects:   make(map[int]rawPDFObject),
@@ -215,12 +252,12 @@ func (p *rawPDFParser) parseObjects() {
 				// Prefer /Length: the EOL before "endstream" is a separator,
 				// not data. Trim-right would corrupt streams whose payload
 				// legitimately ends with a newline byte (zlib checksums can).
-				if l, direct := streamLengthDirect(obj.dict); direct && l > 0 && int(l) <= len(raw) {
-					raw = raw[:l]
-				} else {
-					raw = bytes.TrimRight(raw, "\r\n")
-				}
-				obj.stream = p.decodeStream(raw, obj.dict)
+			if l, direct := streamLengthDirect(obj.dict); direct && l > 0 && int(l) <= len(raw) {
+				raw = raw[:l]
+			} else {
+				raw = bytes.TrimRight(raw, "\r\n")
+			}
+			obj.rawStream = raw
 			}
 		}
 		p.objects[num] = obj
@@ -319,7 +356,7 @@ func (p *rawPDFParser) parseObjectStreams() {
 	// Collect ObjStm object numbers first (map iteration + insert is unsafe).
 	var stmNums []int
 	for num, obj := range p.objects {
-		if obj.stream != nil && strings.Contains(obj.dict, "/ObjStm") {
+		if obj.rawStream != nil && strings.Contains(obj.dict, "/ObjStm") {
 			stmNums = append(stmNums, num)
 		}
 	}
@@ -333,10 +370,11 @@ func (p *rawPDFParser) expandObjectStream(num int) {
 	obj := p.objects[num]
 	n := extractIntValue(obj.dict, "/N")
 	first := extractIntValue(obj.dict, "/First")
-	if n <= 0 || first <= 0 || first > len(obj.stream) {
+	stm := p.streamData(num)
+	if n <= 0 || first <= 0 || first > len(stm) {
 		return
 	}
-	header := string(obj.stream[:first])
+	header := string(stm[:first])
 	fields := strings.Fields(header)
 	if len(fields) < 2*n {
 		return
@@ -356,17 +394,17 @@ func (p *rawPDFParser) expandObjectStream(num int) {
 	}
 	for i, e := range entries {
 		start := first + e.offset
-		if start < 0 || start > len(obj.stream) {
+		if start < 0 || start > len(stm) {
 			continue
 		}
-		end := len(obj.stream)
+		end := len(stm)
 		if i+1 < len(entries) {
 			end = first + entries[i+1].offset
-			if end > len(obj.stream) {
-				end = len(obj.stream)
+			if end > len(stm) {
+				end = len(stm)
 			}
 		}
-		body := obj.stream[start:end]
+		body := stm[start:end]
 		inner := p.parseInnerObject(e.objNum, body)
 		p.objects[e.objNum] = inner
 	}
@@ -1210,12 +1248,9 @@ func (p *rawPDFParser) getPageContentStream(pageIdx int) []byte {
 	page := p.pages[pageIdx]
 	var buf bytes.Buffer
 	for _, ref := range page.contents {
-		obj, ok := p.objects[ref]
-		if !ok {
-			continue
-		}
-		if obj.stream != nil {
-			buf.Write(obj.stream)
+		stream := p.streamData(ref)
+		if stream != nil {
+			buf.Write(stream)
 			buf.WriteByte('\n')
 		}
 	}

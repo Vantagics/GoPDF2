@@ -271,8 +271,6 @@ func (gp *GoPdf) Line(x1 float64, y1 float64, x2 float64, y2 float64) {
 
 // RectFromLowerLeft : draw rectangle from lower-left corner (x, y)
 func (gp *GoPdf) RectFromLowerLeft(x float64, y float64, wdth float64, hght float64) {
-	gp.UnitsToPointsVar(&x, &y, &wdth, &hght)
-
 	opts := DrawableRectOptions{
 		X:          x,
 		Y:          y,
@@ -280,13 +278,12 @@ func (gp *GoPdf) RectFromLowerLeft(x float64, y float64, wdth float64, hght floa
 		Rect:       Rect{W: wdth, H: hght},
 	}
 
-	gp.getContent().AppendStreamRectangle(opts)
+	// via WithOpts so the current transparency (SetTransparency) applies
+	gp.RectFromLowerLeftWithOpts(opts)
 }
 
 // RectFromUpperLeft : draw rectangle from upper-left corner (x, y)
 func (gp *GoPdf) RectFromUpperLeft(x float64, y float64, wdth float64, hght float64) {
-	gp.UnitsToPointsVar(&x, &y, &wdth, &hght)
-
 	opts := DrawableRectOptions{
 		X:          x,
 		Y:          y + hght,
@@ -294,7 +291,8 @@ func (gp *GoPdf) RectFromUpperLeft(x float64, y float64, wdth float64, hght floa
 		Rect:       Rect{W: wdth, H: hght},
 	}
 
-	gp.getContent().AppendStreamRectangle(opts)
+	// via WithOpts so the current transparency (SetTransparency) applies
+	gp.RectFromLowerLeftWithOpts(opts)
 }
 
 // RectFromLowerLeftWithStyle : draw rectangle from lower-left corner (x, y)

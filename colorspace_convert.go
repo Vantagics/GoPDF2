@@ -54,7 +54,11 @@ func ConvertColorspace(pdfData []byte, opt ConvertColorspaceOption) ([]byte, err
 	for _, page := range parser.pages {
 		for _, contentRef := range page.contents {
 			obj, ok := parser.objects[contentRef]
-			if !ok || obj.stream == nil {
+			if !ok {
+				continue
+			}
+			obj.stream = parser.streamData(contentRef)
+			if obj.stream == nil {
 				continue
 			}
 
